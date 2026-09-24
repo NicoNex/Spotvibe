@@ -43,7 +43,13 @@ struct RootView: View {
     /// The accent tints the glass, scaled by the system glass-tint slider. Reduce
     /// Transparency swaps the glass out for a solid window background.
     private var glass: Glass {
-        search.reduceTransparency ? .identity : .regular.tint(accent.opacity(0.14 * search.glassTint))
+        guard !search.reduceTransparency else { return .identity }
+        // interactive() is the one thing macOS 27 added to the material (AppKit spells it
+        // NSGlassEffectView.effectIsInteractive, API_AVAILABLE(macos(27.0))): the glass
+        // answers the light with a live specular response instead of a static sheen, which
+        // is most of what makes the rim read as a solid edge rather than a drawn outline.
+        // The tint is deliberately slight — pigment fills the specular in and flattens it.
+        return .regular.tint(accent.opacity(0.07 * search.glassTint)).interactive()
     }
 
     private var solidFallback: AnyShapeStyle {
