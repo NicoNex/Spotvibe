@@ -47,6 +47,10 @@ public final class Search {
     /// union bridge the system draws between two glass shapes thins as they pull apart, and
     /// snaps when the gap passes the container's merge distance.
     public var separated = false
+    /// Second phase of the entrance: the two droplets stretch into the search bar and the
+    /// panel. Kept apart from `separated` so the split reads first and the shapes after —
+    /// driven together, the drops are already slabs by the time the gap opens.
+    public var shaped = false
     /// The results' contents fade in once the two bodies have finished separating.
     /// Animating the glass shapes while they are full of icons and text reads as busy;
     /// empty slabs separating, then content arriving, reads as liquid.
@@ -205,6 +209,7 @@ public final class Search {
         text = ""
         launching = nil
         separated = false
+        shaped = false
         contentVisible = false
         expanded = false
         rebuild()

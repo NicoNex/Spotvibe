@@ -134,6 +134,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Start as one drop, with nothing in it.
         search.separated = false
+        search.shaped = false
         search.contentVisible = false
         reposition()
         panel.alphaValue = 0
@@ -155,10 +156,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.search.focusToken += 1
             self.search.visible = true
         }
-        // 2. it pulls apart: the bridge between the two shapes thins, snaps, and rebounds
-        after(0.20) { self.search.separated = true }
-        // 3. once they have settled, the contents arrive
-        after(0.62) { self.search.contentVisible = true }
+        // 2. the drop divides: a smaller droplet above, a larger one below, and the bridge
+        //    between them thins, snaps and rebounds
+        after(0.12) { self.search.separated = true }
+        // 3. each droplet stretches into what it was going to be — the bar and the panel
+        after(0.46) { self.search.shaped = true }
+        // 4. and only then do the contents arrive
+        after(0.88) { self.search.contentVisible = true }
     }
 
     /// Runs `work` on the main queue after `delay`, dropped if the panel changed state.
@@ -184,11 +188,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // and only then does the drop fade. `expanded` deliberately stays true — clearing
         // it would empty the hierarchy mid-animation.
         search.contentVisible = false
-        after(0.10) { self.search.separated = false }
+        // The way in, run backwards: the bar and the panel round back into droplets, the
+        // droplets flow into one, and the drop fades.
+        after(0.08) { self.search.shaped = false }
+        after(0.34) { self.search.separated = false }
 
         // The rejoin needs its own beat. Fading immediately outran the spring and the panel
         // vanished mid-merge, so the closing never read as liquid.
-        after(0.46) {
+        after(0.74) {
             guard !self.search.visible, self.panel.isVisible else { return }
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.18

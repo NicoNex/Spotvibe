@@ -36,24 +36,53 @@ struct RootView: View {
     static let panelSize = CGSize(width: panelWidth + outerPadding * 2, height: 660)
     /// Past `mergeDistance`, so the bridge has snapped and the two are plainly apart.
     private static let restingGap: CGFloat = 26
-    /// Nearly touching, NOT overlapping. Overlapped shapes are a single shape and the
-    /// system has no bridge to draw; a hair apart, it draws a thick one that thins as
-    /// they separate. That bridge is the neck.
-    private static let mergedGap: CGFloat = 2
+    /// Deep overlap: at rest the two droplets are one body, and the union has a single
+    /// silhouette to draw. Pulling apart takes them through the thinning bridge on the way.
+    private static let mergedGap: CGFloat = -178
     /// How far apart two glass shapes still count as one body.
     private static let mergeDistance: CGFloat = 20
+    /// While they are still droplets they stand further apart than they will as panels, so
+    /// the moment of being TWO of them is unmistakable before either starts to stretch.
+    private static let splitGap: CGFloat = 54
+    private static let fieldHeight: CGFloat = 92
+    /// The two droplets the panel is born as: a small one above, a larger one below.
+    private static let fieldDrop: CGFloat = 150
+    private static let listDrop: CGFloat = 212
 
-    private let fieldShape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+    /// Phase one: 0 = the two droplets sit inside each other as a single drop, 1 = they
+    /// are apart. Only the gap reads from this.
+    private var split: CGFloat { search.separated ? 1 : 0 }
+    /// Phase two: 0 = still round droplets, 1 = the search bar and the panel.
+    private var shape: CGFloat { search.shaped ? 1 : 0 }
 
-    /// The gap the whole effect hangs on. `glassEffectUnion` merges two glass shapes by
+    private func lerp(_ drop: CGFloat, _ panel: CGFloat, _ t: CGFloat) -> CGFloat {
+        drop + (panel - drop) * t
+    }
+
+    /// The gap the separation hangs on. `glassEffectUnion` merges two glass shapes by
     /// proximity, so pulling them apart makes the system's own bridge between them thin
-    /// out and snap — no hand-drawn neck involved.
-    private var gap: CGFloat { search.separated ? Self.restingGap : Self.mergedGap }
+    /// out and snap — there is no hand-drawn neck anywhere in here.
+    private var gap: CGFloat {
+        lerp(Self.mergedGap, lerp(Self.splitGap, Self.restingGap, shape), split)
+    }
 
-    /// The surface relaxes: rounder while the two are still one body, tightening as each
-    /// settles into its own shape.
+    private var fieldSize: CGSize {
+        CGSize(width: lerp(Self.fieldDrop, Self.panelWidth, shape),
+               height: lerp(Self.fieldDrop, Self.fieldHeight, shape))
+    }
+
+    private var listSize: CGSize {
+        CGSize(width: lerp(Self.listDrop, Self.panelWidth, shape),
+               height: lerp(Self.listDrop, resultsHeight, shape))
+    }
+
+    /// Fully round while it is a droplet, settling to the panel's own radius.
+    private var fieldShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: lerp(Self.fieldDrop / 2, 28, shape), style: .continuous)
+    }
+
     private var listShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: search.separated ? 26 : 44, style: .continuous)
+        RoundedRectangle(cornerRadius: lerp(Self.listDrop / 2, 26, shape), style: .continuous)
     }
 
     /// The live system accent. Color.accentColor resolves to the asset-catalog accent and
@@ -67,6 +96,11 @@ struct RootView: View {
     /// Transparency swaps the glass out for a solid window background.
     private var glass: Glass {
         guard !search.reduceTransparency else { return .identity }
+        // A droplet is nearly all backdrop: .clear is the transparent member of the family,
+        // and it takes no tint, so the drop reads as a lens rather than a panel. .opacity()
+        // is not an option here — it forces the subtree offscreen and the glass stops
+        // sampling the live backdrop, which is the whole effect.
+        guard search.shaped else { return .clear.interactive() }
         // interactive() is the one thing macOS 27 added to the material (AppKit spells it
         // NSGlassEffectView.effectIsInteractive, API_AVAILABLE(macos(27.0))): the glass
         // answers the light with a live specular response instead of a static sheen, which
@@ -94,7 +128,10 @@ struct RootView: View {
             GlassEffectContainer(spacing: Self.mergeDistance) {
                 VStack(spacing: gap) {
                     field
-                        .frame(width: Self.panelWidth)
+                        // Animating a frame is layout, not a transform: it does not force
+                        // the subtree offscreen the way scaleEffect would, so the glass
+                        // keeps sampling the live backdrop all the way through the morph.
+                        .frame(width: fieldSize.width, height: fieldSize.height)
                         .background(solidFallback, in: fieldShape)
                         .glassEffect(glass, in: fieldShape)
                         .glassEffectID("field", in: _ns.wrappedValue)
@@ -103,7 +140,7 @@ struct RootView: View {
 
                     if search.rowCount > 0, search.expanded {
                         results
-                            .frame(width: Self.panelWidth)
+                            .frame(width: listSize.width, height: listSize.height)
                             .background(solidFallback, in: listShape)
                             .glassEffect(glass, in: listShape)
                             .glassEffectID("results", in: _ns.wrappedValue)
@@ -113,10 +150,12 @@ struct RootView: View {
                 }
                 .padding(Self.outerPadding)
             }
-            // One spring, lightly damped, drives the whole separation. The overshoot IS the
-            // bounce: the gap runs past its resting value and settles back, the way two
-            // bodies of liquid rebound after letting go of each other.
-            .animation(.spring(response: 0.54, dampingFraction: 0.5), value: search.separated)
+            // Two springs, both lightly damped, and the overshoot IS the bounce: each value
+            // runs past its resting point and settles back, the way liquid rebounds after
+            // letting go. The split is the springier of the two, since that is the moment
+            // the bridge between the droplets snaps.
+            .animation(.spring(response: 0.48, dampingFraction: 0.46), value: search.separated)
+            .animation(.spring(response: 0.52, dampingFraction: 0.62), value: search.shaped)
         }
         .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
         // Nothing here wraps the glass container in opacity, blur, scale or shadow. Every
@@ -152,7 +191,9 @@ struct RootView: View {
                 .onKeyPress(.downArrow) { move(step) }
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 17)
+        .frame(height: Self.fieldHeight)
+        .opacity(search.contentVisible ? 1 : 0)
+        .animation(.smooth(duration: 0.3), value: search.contentVisible)
     }
 
     // MARK: Rows
