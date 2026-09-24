@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpotVibe — Concept Liquid Glass</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --accent:#5B8CFF;
+    --blur:26px;
+    --tint:.10;
+    --sat:180%;
+    --ui:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","Helvetica Neue",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:#04050a;color:#fff;font-family:var(--ui);overflow:hidden}
+
+  /* ---- the live backdrop. Everything below samples THIS at runtime. ---- */
+  #stage{position:fixed;inset:0;overflow:hidden}
+  #bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none}
+  #fallback{position:absolute;inset:-10%;
+    background:
+      radial-gradient(38% 34% at 20% 22%,rgba(116,186,255,.85),transparent 60%),
+      radial-gradient(34% 30% at 78% 20%,rgba(255,96,178,.80),transparent 60%),
+      radial-gradient(42% 36% at 62% 82%,rgba(64,246,196,.62),transparent 62%),
+      radial-gradient(28% 26% at 24% 78%,rgba(255,186,64,.62),transparent 60%),
+      linear-gradient(150deg,#070c1a,#160a22 48%,#04101c);
+    animation:drift 18s ease-in-out infinite alternate}
+  @keyframes drift{
+    0%{transform:translate3d(-2%,-1%,0) scale(1.06) rotate(0deg)}
+    50%{transform:translate3d(3%,2%,0) scale(1.14) rotate(3deg)}
+    100%{transform:translate3d(-1%,3%,0) scale(1.08) rotate(-2deg)}
+  }
+  /* hard-edged moving shapes: without contrast behind it, no glass reads as glass */
+  .bar{position:absolute;background:rgba(255,255,255,.92);mix-blend-mode:overlay;
+       animation:sweep 11s linear infinite}
+  @keyframes sweep{from{transform:translateX(-30vw)}to{transform:translateX(130vw)}}
+
+  /* ---- glass ---- */
+  .glass{position:absolute;overflow:hidden;isolation:isolate;
+    -webkit-backdrop-filter:blur(var(--blur)) saturate(var(--sat)) brightness(1.06);
+    backdrop-filter:blur(var(--blur)) saturate(var(--sat)) brightness(1.06);
+    background:linear-gradient(150deg,
+      color-mix(in srgb,var(--accent) calc(var(--tint)*100%),rgba(255,255,255,.20)),
+      rgba(255,255,255,.06) 42%,
+      color-mix(in srgb,var(--accent) calc(var(--tint)*60%),rgba(255,255,255,.14)));
+    box-shadow:0 40px 100px rgba(0,0,0,.55);
+  }
+  /* the rim. A second backdrop pass, displaced by an SVG turbulence filter and masked to
+     the border ring — this is the edge lensing. Blink applies the url(); Safari and Firefox
+     ignore it and keep the blur, so the rim degrades to a bright edge rather than breaking. */
+  .lens{position:absolute;inset:0;border-radius:inherit;pointer-events:none;padding:14px;
+    -webkit-backdrop-filter:blur(2px) url(#refract) saturate(240%) brightness(1.22);
+    backdrop-filter:blur(2px) url(#refract) saturate(240%) brightness(1.22);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;
+    mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0)}
+  .rim{position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.30),
+               inset 0 1.5px 1px rgba(255,255,255,.62),
+               inset 0 -1.5px 2px rgba(255,255,255,.20)}
+
+  .scene{position:absolute;inset:0;opacity:0;pointer-events:none;transition:opacity .5s ease}
+  .scene[data-on]{opacity:1;pointer-events:auto}
+
+  .tile{display:flex;flex-direction:column;align-items:center;gap:9px}
+  .ico{width:58px;height:58px;border-radius:14px;
+       box-shadow:0 8px 18px rgba(0,0,0,.42),inset 0 0 0 1px rgba(255,255,255,.16)}
+  .lbl{font-size:12.5px;color:rgba(255,255,255,.95);text-shadow:0 1px 3px rgba(0,0,0,.5)}
+  .q{flex-grow:1;background:transparent;border:0;outline:none;color:#fff;
+     font:500 30px var(--ui);letter-spacing:-.01em}
+  .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+  /* ---- caption + controls ---- */
+  .cap{position:absolute;left:44px;bottom:132px;max-width:430px}
+  .cap h2{font-family:"Instrument Serif",Georgia,serif;font-weight:400;font-size:48px;
+          line-height:1;margin:0;text-shadow:0 2px 20px rgba(0,0,0,.6)}
+  .cap p{margin:12px 0 0;font-size:14.5px;line-height:1.55;color:rgba(255,255,255,.86);
+         text-shadow:0 1px 8px rgba(0,0,0,.7)}
+
+  #bar{position:fixed;left:50%;transform:translateX(-50%);bottom:26px;z-index:9;
+       display:flex;align-items:center;gap:8px;padding:9px;border-radius:26px}
+  #bar button{appearance:none;border:0;cursor:pointer;color:#fff;background:transparent;
+    font:500 13.5px var(--ui);padding:9px 15px;border-radius:18px;transition:background .18s}
+  #bar button:hover{background:rgba(255,255,255,.14)}
+  #bar button[aria-pressed="true"]{background:var(--accent);box-shadow:0 4px 16px rgba(0,0,0,.4)}
+  #bar label{font-size:12px;color:rgba(255,255,255,.82);display:flex;align-items:center;gap:7px}
+  #bar input[type=range]{width:86px;accent-color:var(--accent)}
+  .sep{width:1px;height:26px;background:rgba(255,255,255,.22)}
+  .file{font:500 13.5px var(--ui);padding:9px 15px;border-radius:18px;cursor:pointer;
+        background:rgba(255,255,255,.14);white-space:nowrap}
+  .file input{display:none}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" aria-hidden="true" style="position:absolute">
+  <defs>
+    <filter id="refract" x="-40%" y="-40%" width="180%" height="180%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.009 0.017" numOctaves="3" seed="9" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="62" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="refractSoft" x="-30%" y="-30%" width="160%" height="160%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.004 0.009" numOctaves="2" seed="3" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="26" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="goo">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="14" result="b"/>
+      <feColorMatrix in="b" mode="matrix"
+        values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 26 -12" result="g"/>
+    </filter>
+    <clipPath id="neck" clipPathUnits="objectBoundingBox">
+      <path d="M0.42,0 C0.42,0.28 0.47,0.22 0.47,0.42 C0.47,0.62 0.40,0.60 0.40,1 L0.60,1 C0.60,0.60 0.53,0.62 0.53,0.42 C0.53,0.22 0.58,0.28 0.58,0 Z"/>
+    </clipPath>
+  </defs>
+</svg>
+
+<div id="stage">
+  <video id="bg" autoplay muted loop playsinline></video>
+  <div id="fallback"></div>
+  <div class="bar" style="left:0;top:14%;width:26vw;height:9vh;animation-duration:13s"></div>
+  <div class="bar" style="left:0;top:58%;width:16vw;height:5vh;animation-duration:9s;animation-delay:-3s"></div>
+  <div class="bar" style="left:0;top:78%;width:34vw;height:7vh;animation-duration:16s;animation-delay:-7s"></div>
+
+  <!-- 1 — MENISCO -->
+  <section class="scene" data-scene="menisco" data-on>
+    <div class="glass" style="left:50%;transform:translateX(-50%);top:16%;width:720px;height:92px;border-radius:46px">
+      <div class="lens"></div><div class="rim"></div>
+      <div style="position:relative;height:100%;display:flex;align-items:center;gap:16px;padding:0 32px">
+        <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.75)" stroke-width="2.1"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>
+        <label class="sr" for="q1">Cerca</label>
+        <input class="q" id="q1" value="calendario" readonly>
+        <span style="width:32px;height:32px;border-radius:50%;background:var(--accent);box-shadow:0 0 26px var(--accent),inset 0 0 0 1px rgba(255,255,255,.45)"></span>
+      </div>
+    </div>
+    <!-- the neck still joining field to results -->
+    <div class="glass" style="left:50%;transform:translateX(-50%);top:calc(16% + 92px);width:720px;height:54px;border-radius:0;clip-path:url(#neck);box-shadow:none"></div>
+    <div class="glass" style="left:50%;transform:translateX(-50%);top:calc(16% + 146px);width:820px;height:330px;border-radius:50px">
+      <div class="lens"></div><div class="rim"></div>
+      <div class="grid" style="position:relative;padding:38px 46px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:30px 18px"></div>
+    </div>
+    <div class="cap"><h2>Menisco</h2><p>Campo e risultati sono una sola massa che si sta dividendo. Finché la separazione non è finita resta un collo liquido a unirli, e la luce dietro lo attraversa strozzata.</p></div>
+  </section>
+
+  <!-- 2 — CAUSTICHE -->
+  <section class="scene" data-scene="caustiche">
+    <div class="glass" style="left:50%;transform:translateX(-50%);top:14%;width:860px;height:470px;border-radius:44px">
+      <div class="lens"></div><div class="rim"></div>
+      <div id="caustics" style="position:absolute;inset:0;mix-blend-mode:screen;opacity:.85"></div>
+      <div class="grid" style="position:relative;padding:44px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:36px 18px"></div>
+    </div>
+    <div class="cap"><h2>Caustiche</h2><p>Ogni icona è una lente. Proietta sulla lastra sotto la luce che ha raccolto dallo sfondo, e la selezione è semplicemente la lente che mette a fuoco: il fascio si stringe e si accende.</p></div>
+  </section>
+
+  <!-- 3 — STRATI -->
+  <section class="scene" data-scene="strati">
+    <div class="glass" style="left:50%;transform:translateX(-50%);top:12%;width:760px;height:84px;border-radius:42px;z-index:4">
+      <div class="lens"></div><div class="rim"></div>
+      <div style="position:relative;height:100%;display:flex;align-items:center;gap:16px;padding:0 30px">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.75)" stroke-width="2.1"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>
+        <label class="sr" for="q3">Cerca</label><input class="q" id="q3" value="progetto" readonly>
+      </div>
+    </div>
+    <div id="strata"></div>
+    <div class="cap"><h2>Strati</h2><p>Il blur smette di essere decorazione e diventa profondità. I risultati stanno su piani di vetro che arretrano; quello selezionato viene tirato in avanti fino a tornare nitido.</p></div>
+  </section>
+
+  <!-- 4 — ONDA -->
+  <section class="scene" data-scene="onda">
+    <div class="glass" style="left:50%;transform:translateX(-50%);top:15%;width:840px;height:440px;border-radius:46px">
+      <div class="lens"></div>
+      <div class="ripple" style="position:absolute;left:50%;top:44%;width:80px;height:80px;margin:-40px 0 0 -40px;border-radius:50%;
+           box-shadow:0 0 0 2px rgba(255,255,255,.55),0 0 40px 8px rgba(255,255,255,.28);
+           -webkit-backdrop-filter:url(#refractSoft) brightness(1.3);backdrop-filter:url(#refractSoft) brightness(1.3);
+           animation:ring 2.6s cubic-bezier(.16,.8,.3,1) infinite"></div>
+      <div class="rim"></div>
+      <div class="grid" style="position:relative;padding:42px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:34px 18px"></div>
+    </div>
+    <div class="cap"><h2>Onda</h2><p>Invio manda un'onda attraverso la lastra. Non è un bagliore sovrapposto: è il vetro che si deforma davvero, e per un istante tutto quello che c'è dietro si piega con lei.</p></div>
+  </section>
+
+  <!-- 5 — CIOTTOLI -->
+  <section class="scene" data-scene="ciottoli">
+    <div id="pebbles" style="position:absolute;inset:0"></div>
+    <div class="cap"><h2>Ciottoli</h2><p>Il contenitore sparisce. I risultati galleggiano sulla scrivania come gocce separate e, quando si avvicinano, si fondono davvero: una sola superficie con due nuclei.</p></div>
+  </section>
+</div>
+
+<div id="bar" class="glass" style="position:fixed;border-radius:26px">
+  <div class="rim"></div>
+  <div style="position:relative;display:flex;align-items:center;gap:8px">
+    <button data-go="menisco" aria-pressed="true">Menisco</button>
+    <button data-go="caustiche" aria-pressed="false">Caustiche</button>
+    <button data-go="strati" aria-pressed="false">Strati</button>
+    <button data-go="onda" aria-pressed="false">Onda</button>
+    <button data-go="ciottoli" aria-pressed="false">Ciottoli</button>
+    <span class="sep"></span>
+    <label>Blur <input id="sBlur" type="range" min="0" max="60" value="26"></label>
+    <label>Tinta <input id="sTint" type="range" min="0" max="40" value="10"></label>
+    <label>Accento <input id="sAccent" type="color" value="#5B8CFF" style="width:30px;height:24px;border:0;background:none;cursor:pointer"></label>
+    <span class="sep"></span>
+    <label class="file">Metti un video dietro<input id="vid" type="file" accept="video/*"></label>
+  </div>
+</div>
+
+<style>
+@keyframes ring{
+  0%{width:60px;height:60px;margin:-30px 0 0 -30px;opacity:0}
+  12%{opacity:1}
+  100%{width:940px;height:940px;margin:-470px 0 0 -470px;opacity:0}
+}
+</style>
+
+<script>
+const APPS = [
+  ['Calendario','linear-gradient(160deg,#fff,#e7e7ef)'],
+  ['Promemoria','linear-gradient(160deg,#ff8a6b,#e0492c)'],
+  ['Calcolatrice','linear-gradient(160deg,#6fd3ff,#2c7fe0)'],
+  ['Note','linear-gradient(160deg,#c9a6ff,#7a4fe0)'],
+  ['Contatti','linear-gradient(160deg,#9ef5c8,#2eb47a)'],
+  ['Anteprima','linear-gradient(160deg,#ffd98a,#e0a12c)'],
+  ['Mail','linear-gradient(160deg,#a6c4ff,#4f6fe0)'],
+  ['Foto','linear-gradient(160deg,#ff9ed2,#e04f9a)'],
+  ['Terminale','linear-gradient(160deg,#d9d9e1,#8d8d9a)'],
+  ['Meteo','linear-gradient(160deg,#8af0ff,#2c9fe0)'],
+];
+
+function tile(name, bg, selected) {
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = 'tile';
+  el.style.cssText = 'background:' + (selected ? 'var(--accent)' : 'transparent') +
+    ';border:0;cursor:pointer;padding:12px 6px;border-radius:16px';
+  el.innerHTML = '<span class="ico" style="background:' + bg + '"></span>' +
+                 '<span class="lbl">' + name + '</span>';
+  return el;
+}
+
+// every grid in the page gets the same app set; index 0 is the selected one
+document.querySelectorAll('.grid').forEach(grid => {
+  APPS.forEach(([n, b], i) => grid.appendChild(tile(n, b, i === 0)));
+});
+
+// caustics: each icon throws a pool of light onto the slab beneath it
+const caustics = document.getElementById('caustics');
+APPS.forEach((_, i) => {
+  const col = i % 5, row = (i / 5) | 0;
+  const d = document.createElement('div');
+  const focused = i === 0;
+  d.style.cssText =
+    'position:absolute;left:' + (78 + col * 148) + 'px;top:' + (128 + row * 170) + 'px;' +
+    'width:' + (focused ? 90 : 150) + 'px;height:' + (focused ? 90 : 150) + 'px;' +
+    'margin:-45px 0 0 -45px;border-radius:50%;filter:blur(' + (focused ? 10 : 26) + 'px);' +
+    'background:radial-gradient(circle,rgba(255,255,255,' + (focused ? .95 : .34) + '),transparent 70%)';
+  caustics.appendChild(d);
+});
+
+// strata: receding planes, the selected row pulled back to the front
+const strata = document.getElementById('strata');
+['Progetto SpotVibe','progetto-note.md','Progetti 2026','progetto.sketch','vecchio-progetto.zip'].forEach((name, i) => {
+  const front = i === 1;
+  const row = document.createElement('div');
+  row.className = 'glass';
+  const depth = front ? 0 : i + 1;
+  row.style.cssText =
+    'left:50%;top:calc(24% + ' + (i * 88) + 'px);width:' + (700 - depth * 46) + 'px;height:70px;' +
+    'border-radius:22px;transform:translateX(-50%) scale(' + (1 - depth * .015) + ');' +
+    'filter:blur(' + (front ? 0 : depth * 1.6) + 'px);opacity:' + (front ? 1 : 1 - depth * .14) + ';' +
+    'z-index:' + (front ? 3 : 2 - i) + ';--blur:' + (front ? 30 : 14) + 'px';
+  row.innerHTML =
+    '<div class="rim"></div><div style="position:relative;height:100%;display:flex;align-items:center;' +
+    'gap:16px;padding:0 24px">' +
+    '<span class="ico" style="width:40px;height:40px;border-radius:10px;background:' + APPS[i][1] + '"></span>' +
+    '<span style="font:500 16px var(--ui);color:#fff">' + name + '</span></div>';
+  if (front) row.style.boxShadow = '0 24px 60px rgba(0,0,0,.5),0 0 0 2px var(--accent)';
+  strata.appendChild(row);
+});
+
+// pebbles: separate drops that genuinely merge where they touch
+const pebbles = document.getElementById('pebbles');
+const goo = document.createElement('div');
+goo.style.cssText = 'position:absolute;inset:0;filter:url(#goo);opacity:.30';
+const LAY = [[50,26,300,76],[38,46,210,92],[62,46,230,92],[34,62,190,84],[58,62,250,84],[47,78,170,78]];
+LAY.forEach(([x, y, w, h]) => {
+  const b = document.createElement('div');
+  b.style.cssText = 'position:absolute;left:' + x + '%;top:' + y + '%;width:' + w + 'px;height:' + h +
+    'px;margin:' + (-h / 2) + 'px 0 0 ' + (-w / 2) + 'px;border-radius:' + (h / 2) +
+    'px;background:#fff';
+  goo.appendChild(b);
+});
+pebbles.appendChild(goo);
+const LABELS = ['calendario', 'Calendario', 'Promemoria', 'Note', 'Contatti', 'Cerca sul web'];
+LAY.forEach(([x, y, w, h], i) => {
+  const p = document.createElement('div');
+  p.className = 'glass';
+  p.style.cssText = 'left:' + x + '%;top:' + y + '%;width:' + w + 'px;height:' + h + 'px;margin:' +
+    (-h / 2) + 'px 0 0 ' + (-w / 2) + 'px;border-radius:' + (h / 2) + 'px;display:flex;' +
+    'align-items:center;justify-content:center;gap:12px';
+  p.innerHTML = '<div class="lens"></div><div class="rim"></div>' +
+    (i === 0 ? '' : '<span class="ico" style="width:38px;height:38px;border-radius:10px;background:' + APPS[i][1] + '"></span>') +
+    '<span style="position:relative;font:500 ' + (i === 0 ? 26 : 15) + 'px var(--ui);color:#fff">' + LABELS[i] + '</span>';
+  pebbles.appendChild(p);
+});
+
+// controls
+const root = document.documentElement;
+document.querySelectorAll('#bar [data-go]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#bar [data-go]').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    document.querySelectorAll('.scene').forEach(s => {
+      if (s.dataset.scene === btn.dataset.go) s.setAttribute('data-on', '');
+      else s.removeAttribute('data-on');
+    });
+  });
+});
+sBlur.addEventListener('input', e => root.style.setProperty('--blur', e.target.value + 'px'));
+sTint.addEventListener('input', e => root.style.setProperty('--tint', e.target.value / 100));
+sAccent.addEventListener('input', e => root.style.setProperty('--accent', e.target.value));
+
+// ?s=<scene> opens straight on one scene
+function gotoScene(name) {
+  const btn = name && document.querySelector('#bar [data-go="' + name + '"]');
+  if (btn) btn.click();
+}
+gotoScene(new URLSearchParams(location.search).get('s') || location.hash.slice(1));
+addEventListener('hashchange', () => gotoScene(location.hash.slice(1)));
+
+// drop a real video behind the glass: backdrop-filter samples it live, frame by frame
+vid.addEventListener('change', e => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  const v = document.getElementById('bg');
+  v.src = URL.createObjectURL(f);
+  v.style.display = 'block';
+  document.getElementById('fallback').style.display = 'none';
+  v.play().catch(() => {});
+});
+</script>
+</body>
+</html>
