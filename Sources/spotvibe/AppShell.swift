@@ -55,7 +55,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var topY: CGFloat = 0
 
     func applicationDidFinishLaunching(_: Notification) {
-        panel = Panel(contentRect: NSRect(x: 0, y: 0, width: 728, height: 130),
+        panel = Panel(contentRect: NSRect(origin: .zero, size: RootView.panelSize),
                       styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
                       backing: .buffered, defer: false)
         panel.isFloatingPanel = true
@@ -76,7 +76,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.delegate = self
 
         let host = NSHostingController(rootView: RootView(search: search, onClose: { [weak self] in self?.hide() }))
-        host.sizingOptions = [.preferredContentSize] // panel tracks the SwiftUI content height
+        // No self-sizing: the window keeps one size for its whole life and the content
+        // moves inside it. See RootView.panelSize.
         host.view.setValue(NSColor.clear, forKey: "backgroundColor")
         panel.contentViewController = host
 
@@ -131,7 +132,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let visible = screen?.visibleFrame else { return }
         topY = visible.maxY - visible.height * 0.10
 
-        search.merged = true
+        // Start as one drop, with nothing in it.
+        search.separated = false
+        search.contentVisible = false
         reposition()
         panel.alphaValue = 0
         // Order in and take key WHILE THE CONTENT IS STILL SMALL. Making a window key runs
@@ -140,29 +143,27 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // and never returns. activate() must come first for the same reason.
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
-
-        // Only now grow the content. The window resizes and repositions here, at alpha 0,
-        // so the one AppKit step that a resize costs happens where nobody can see it —
-        // that step landing in the middle of the fade is what made the panel jump.
         search.expanded = true
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            guard let self else { return }
+        // 1. the drop fades in whole
+        after(0.05) {
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.2
+                context.duration = 0.18
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)
                 self.panel.animator().alphaValue = 1
             }
             self.search.focusToken += 1
             self.search.visible = true
-
-            // Then let go of the union: the single body splits in two and the neck between
-            // them stretches until it snaps. Rendering only — the frame never moves.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) { [weak self] in
-                guard let self, self.search.visible else { return }
-                self.search.merged = false
-            }
         }
+        // 2. it pulls apart: the bridge between the two shapes thins, snaps, and rebounds
+        after(0.20) { self.search.separated = true }
+        // 3. once they have settled, the contents arrive
+        after(0.62) { self.search.contentVisible = true }
+    }
+
+    /// Runs `work` on the main queue after `delay`, dropped if the panel changed state.
+    private func after(_ delay: TimeInterval, _ work: @escaping () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     /// The panel grows downwards as results arrive, so anchor it by its top edge.
@@ -178,21 +179,23 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func hide() {
         guard panel.isVisible, search.visible else { return }
         search.visible = false
-        // `expanded` deliberately stays true here: clearing it would collapse the results
-        // and resize the window mid-fade, which threw the field to a different position.
-        // reset(), after the panel is gone, clears it.
-        search.merged = true // the two bodies flow back into one
 
-        // Give the rejoin its own beat. Fading straight away outran the spring and the
-        // panel vanished mid-merge, so the closing never read as liquid.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
-            guard let self, !self.search.visible, self.panel.isVisible else { return }
+        // The reverse order: the contents go first, then the two bodies flow back into one,
+        // and only then does the drop fade. `expanded` deliberately stays true — clearing
+        // it would empty the hierarchy mid-animation.
+        search.contentVisible = false
+        after(0.10) { self.search.separated = false }
+
+        // The rejoin needs its own beat. Fading immediately outran the spring and the panel
+        // vanished mid-merge, so the closing never read as liquid.
+        after(0.46) {
+            guard !self.search.visible, self.panel.isVisible else { return }
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.2
+                context.duration = 0.18
                 context.timingFunction = CAMediaTimingFunction(name: .easeIn)
                 self.panel.animator().alphaValue = 0
-            } completionHandler: { [weak self] in
-                guard let self, !self.search.visible else { return }
+            } completionHandler: {
+                guard !self.search.visible else { return }
                 self.panel.orderOut(nil)
                 self.panel.alphaValue = 1
                 self.search.reset()

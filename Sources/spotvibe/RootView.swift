@@ -29,9 +29,32 @@ struct RootView: View {
     private static let cellGap: CGFloat = 8
     private static let rowHeight: CGFloat = 48
     private static let panelWidth = cellWidth * CGFloat(columns)
+    private static let outerPadding: CGFloat = 34
+    /// The window is a FIXED size and the content moves inside it. A window resize is a
+    /// single AppKit step that cannot agree with a SwiftUI interpolation, so animating the
+    /// gap in a self-sizing window would jolt the panel on every frame of the separation.
+    static let panelSize = CGSize(width: panelWidth + outerPadding * 2, height: 660)
+    /// Past `mergeDistance`, so the bridge has snapped and the two are plainly apart.
+    private static let restingGap: CGFloat = 26
+    /// Nearly touching, NOT overlapping. Overlapped shapes are a single shape and the
+    /// system has no bridge to draw; a hair apart, it draws a thick one that thins as
+    /// they separate. That bridge is the neck.
+    private static let mergedGap: CGFloat = 2
+    /// How far apart two glass shapes still count as one body.
+    private static let mergeDistance: CGFloat = 20
 
     private let fieldShape = RoundedRectangle(cornerRadius: 28, style: .continuous)
-    private let listShape = RoundedRectangle(cornerRadius: 26, style: .continuous)
+
+    /// The gap the whole effect hangs on. `glassEffectUnion` merges two glass shapes by
+    /// proximity, so pulling them apart makes the system's own bridge between them thin
+    /// out and snap — no hand-drawn neck involved.
+    private var gap: CGFloat { search.separated ? Self.restingGap : Self.mergedGap }
+
+    /// The surface relaxes: rounder while the two are still one body, tightening as each
+    /// settles into its own shape.
+    private var listShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: search.separated ? 26 : 44, style: .continuous)
+    }
 
     /// The live system accent. Color.accentColor resolves to the asset-catalog accent and
     /// only falls back to the system one, so it is not the same guarantee.
@@ -60,38 +83,46 @@ struct RootView: View {
     /// and lens into each other across the gap, which is where the Liquid Glass distortion
     /// actually comes from. A single flat slab shows almost none of it.
     var body: some View {
-        GlassEffectContainer(spacing: 22) {
-            VStack(spacing: 12) {
-                field
-                    .frame(width: Self.panelWidth)
-                    .background(solidFallback, in: fieldShape)
-                    .glassEffect(glass, in: fieldShape)
-                    .glassEffectID("field", in: _ns.wrappedValue)
-                    // The union is deliberately temporary. Held, it fuses the two into one
-                    // slab and the field stops reading as a field; released, the system
-                    // separates them and draws the neck stretching between.
-                    .glassEffectUnion(id: search.merged ? "panel" : nil, namespace: _ns.wrappedValue)
-                    .glassEffectTransition(.matchedGeometry)
+        ZStack(alignment: .top) {
+            // Clicking the margin dismisses, the way clicking outside the panel does. The
+            // window is deliberately larger than the glass, so without this the transparent
+            // area around it would swallow those clicks.
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onClose)
 
-                if search.rowCount > 0, search.expanded {
-                    results
+            GlassEffectContainer(spacing: Self.mergeDistance) {
+                VStack(spacing: gap) {
+                    field
                         .frame(width: Self.panelWidth)
-                        .background(solidFallback, in: listShape)
-                        .glassEffect(glass, in: listShape)
-                        .glassEffectID("results", in: _ns.wrappedValue)
-                        .glassEffectUnion(id: search.merged ? "panel" : nil, namespace: _ns.wrappedValue)
+                        .background(solidFallback, in: fieldShape)
+                        .glassEffect(glass, in: fieldShape)
+                        .glassEffectID("field", in: _ns.wrappedValue)
+                        .glassEffectUnion(id: "panel", namespace: _ns.wrappedValue)
                         .glassEffectTransition(.matchedGeometry)
+
+                    if search.rowCount > 0, search.expanded {
+                        results
+                            .frame(width: Self.panelWidth)
+                            .background(solidFallback, in: listShape)
+                            .glassEffect(glass, in: listShape)
+                            .glassEffectID("results", in: _ns.wrappedValue)
+                            .glassEffectUnion(id: "panel", namespace: _ns.wrappedValue)
+                            .glassEffectTransition(.matchedGeometry)
+                    }
                 }
+                .padding(Self.outerPadding)
             }
+            // One spring, lightly damped, drives the whole separation. The overshoot IS the
+            // bounce: the gap runs past its resting value and settles back, the way two
+            // bodies of liquid rebound after letting go of each other.
+            .animation(.spring(response: 0.54, dampingFraction: 0.5), value: search.separated)
         }
-        .animation(.smooth(duration: 0.34), value: search.rowCount > 0)
-        .animation(.spring(response: 0.46, dampingFraction: 0.70), value: search.merged)
-        // Nothing here animates the glass container, and nothing wraps it in opacity,
-        // blur, scale or shadow. Every one of those forces the subtree offscreen, and a
-        // glass layer that renders offscreen stops sampling the live backdrop — it
-        // degrades to a flat blur with no rim refraction. Present and dismiss are
-        // animated on the NSPanel instead, in AppShell.swift.
-        .padding(34) // room for the glass rim and the shadows drawn above
+        .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
+        // Nothing here wraps the glass container in opacity, blur, scale or shadow. Every
+        // one of those forces the subtree offscreen, and a glass layer that renders
+        // offscreen stops sampling the live backdrop — it degrades to a flat blur with no
+        // rim refraction. Present and dismiss are animated on the NSPanel, in AppShell.
         .onAppear { focused = true }
         // The hosting view outlives every hide, so re-show has to re-assert focus itself.
         .onChange(of: search.focusToken) { _, _ in focused = true }
@@ -177,6 +208,11 @@ struct RootView: View {
                     }
                 }
                 .padding(.top, 4)
+                // Inside the glass, so this touches the content and not the glass layer.
+                .opacity(search.contentVisible ? 1 : 0)
+                .blur(radius: search.contentVisible ? 0 : 7)
+                .offset(y: search.contentVisible ? 0 : 12)
+                .animation(.smooth(duration: 0.34), value: search.contentVisible)
             }
             .scrollIndicators(.never)
             .scrollBounceBehavior(.basedOnSize)
@@ -209,7 +245,8 @@ struct RootView: View {
             if !appRows.isEmpty { height += Self.headerHeight }
             height += CGFloat(min(fileRows.count, 5)) * Self.rowHeight + 8
         }
-        return height
+        // The window is a fixed size now, so the slab cannot grow past what fits in it.
+        return min(height, 452)
     }
 
     private static let headerHeight: CGFloat = 26
@@ -315,7 +352,7 @@ struct RootView: View {
             }
         } else if let hit = search.selectedHit {
             search.record(hit)
-            search.merged = true // the panel becomes one body again as it swallows the pick
+            search.separated = false // the panel flows back into one body as it swallows the pick
             search.launching = hit.id
             // Let the flood play, then launch and dismiss.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.19) {

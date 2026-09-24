@@ -42,9 +42,15 @@ public final class Search {
     /// hundred app cells sitting in it at launch pin the main thread before the panel can
     /// ever be shown.
     public var expanded = false
-    /// True while the field and the results are meant to read as one glass body. Released
-    /// shortly after opening so they visibly separate, and set again on the way out.
-    public var merged = true
+    /// Drives the gap between the field and the results. False overlaps them into a single
+    /// droplet; true is the resting gap. Everything liquid comes out of animating this: the
+    /// union bridge the system draws between two glass shapes thins as they pull apart, and
+    /// snaps when the gap passes the container's merge distance.
+    public var separated = false
+    /// The results' contents fade in once the two bodies have finished separating.
+    /// Animating the glass shapes while they are full of icons and text reads as busy;
+    /// empty slabs separating, then content arriving, reads as liquid.
+    public var contentVisible = false
     /// The path being launched. Set for the length of the launch animation only.
     public var launching: String?
     /// Bumped when the system accent changes. NSColor.controlAccentColor is dynamic, but
@@ -198,7 +204,8 @@ public final class Search {
         lastTerm = ""
         text = ""
         launching = nil
-        merged = true
+        separated = false
+        contentVisible = false
         expanded = false
         rebuild()
     }
