@@ -43,10 +43,10 @@ struct RootView: View {
     private static let notchTop: CGFloat = -96
     /// Past `mergeDistance`, so the bridge has snapped and the two are plainly apart.
     private static let restingGap: CGFloat = 26
-    /// Exactly `-(fieldDrop + listDrop) / 2`, which places the two droplets CONCENTRIC.
-    /// Anything less leaves them side by side and their union is an oval, not a bubble —
-    /// the reference is one round drop, so they have to start as literally one circle.
-    private static let mergedGap: CGFloat = -(fieldDrop + listDrop) / 2
+    /// A drop hanging from the notch is drawn out by its own weight and rounds as it
+    /// lands: narrower and much taller while it is still falling.
+    private static let hangingWidth: CGFloat = 0.72
+    private static let hangingHeight: CGFloat = 1.70
     /// How far apart two glass shapes still count as one body.
     private static let mergeDistance: CGFloat = 20
     /// While they are still droplets they stand further apart than they will as panels, so
@@ -54,9 +54,11 @@ struct RootView: View {
     private static let splitGap: CGFloat = 54
     private static let fieldHeight: CGFloat = 92
     /// The two droplets the panel is born as: a small one above, a larger one below.
-    private static let fieldDrop: CGFloat = 170
-    private static let listDrop: CGFloat = 210
+    private static let fieldDrop: CGFloat = 128
+    private static let listDrop: CGFloat = 232
 
+    /// Phase zero: 0 = hanging in the notch, drawn out; 1 = landed and round.
+    private var drip: CGFloat { search.dripped ? 1 : 0 }
     /// Phase one: 0 = the two droplets sit inside each other as a single drop, 1 = they
     /// are apart. Only the gap reads from this.
     private var split: CGFloat { search.separated ? 1 : 0 }
@@ -67,26 +69,39 @@ struct RootView: View {
         drop + (panel - drop) * t
     }
 
+    private var dropW: CGFloat { lerp(Self.hangingWidth, 1, drip) }
+    private var dropH: CGFloat { lerp(Self.hangingHeight, 1, drip) }
+
+    /// Concentric: exactly minus half of both droplet heights, so their centres coincide
+    /// and the union of the two circles is one circle. It follows the stretch, or the drop
+    /// would split open while it is still falling.
+    private var mergedGap: CGFloat { -(Self.fieldDrop + Self.listDrop) * dropH / 2 }
+
+    /// The union exists only for the morph. Left on at rest it fuses the two into a single
+    /// slab and the search bar stops reading as a search bar, so once they are shaped they
+    /// go back to being two independent bodies of glass.
+    private var unionID: String? { search.shaped ? nil : "panel" }
+
     /// The gap the separation hangs on. `glassEffectUnion` merges two glass shapes by
     /// proximity, so pulling them apart makes the system's own bridge between them thin
     /// out and snap — there is no hand-drawn neck anywhere in here.
     private var gap: CGFloat {
-        lerp(Self.mergedGap, lerp(Self.splitGap, Self.restingGap, shape), split)
+        lerp(mergedGap, lerp(Self.splitGap, Self.restingGap, shape), split)
     }
 
     /// The fall. The window's top edge sits on the top edge of the screen, so a negative
     /// inset puts the drop behind the notch and the window clips whatever is still up
     /// there — it seeps out, falls, and settles where the panel belongs.
-    private var dripOffset: CGFloat { lerp(Self.notchTop, Self.restingTop, split) }
+    private var dripOffset: CGFloat { lerp(Self.notchTop, Self.restingTop, drip) }
 
     private var fieldSize: CGSize {
-        CGSize(width: lerp(Self.fieldDrop, Self.panelWidth, shape),
-               height: lerp(Self.fieldDrop, Self.fieldHeight, shape))
+        CGSize(width: lerp(Self.fieldDrop * dropW, Self.panelWidth, shape),
+               height: lerp(Self.fieldDrop * dropH, Self.fieldHeight, shape))
     }
 
     private var listSize: CGSize {
-        CGSize(width: lerp(Self.listDrop, Self.panelWidth, shape),
-               height: lerp(Self.listDrop, resultsHeight, shape))
+        CGSize(width: lerp(Self.listDrop * dropW, Self.panelWidth, shape),
+               height: lerp(Self.listDrop * dropH, resultsHeight, shape))
     }
 
     /// A true circle while it is a droplet, settling to the panel's own radius.
@@ -97,7 +112,7 @@ struct RootView: View {
     /// The swap happens once the shape has elongated enough for the two to be
     /// indistinguishable, so the panel still rests on the squircle everything else uses.
     private func dropletShape(side: CGFloat, radius: CGFloat) -> RoundedRectangle {
-        RoundedRectangle(cornerRadius: lerp(side / 2, radius, shape),
+        RoundedRectangle(cornerRadius: lerp(side * dropW / 2, radius, shape),
                          style: shape < 0.45 ? .circular : .continuous)
     }
 
@@ -154,7 +169,7 @@ struct RootView: View {
                         .background(solidFallback, in: fieldShape)
                         .glassEffect(glass, in: fieldShape)
                         .glassEffectID("field", in: _ns.wrappedValue)
-                        .glassEffectUnion(id: "panel", namespace: _ns.wrappedValue)
+                        .glassEffectUnion(id: unionID, namespace: _ns.wrappedValue)
                         .glassEffectTransition(.matchedGeometry)
 
                     if search.rowCount > 0, search.expanded {
@@ -163,7 +178,7 @@ struct RootView: View {
                             .background(solidFallback, in: listShape)
                             .glassEffect(glass, in: listShape)
                             .glassEffectID("results", in: _ns.wrappedValue)
-                            .glassEffectUnion(id: "panel", namespace: _ns.wrappedValue)
+                            .glassEffectUnion(id: unionID, namespace: _ns.wrappedValue)
                             .glassEffectTransition(.matchedGeometry)
                     }
                 }
@@ -174,8 +189,11 @@ struct RootView: View {
             // runs past its resting point and settles back, the way liquid rebounds after
             // letting go. The split is the springier of the two, since that is the moment
             // the bridge between the droplets snaps.
-            .animation(.spring(response: 0.48, dampingFraction: 0.46), value: search.separated)
-            .animation(.spring(response: 0.52, dampingFraction: 0.62), value: search.shaped)
+            // Three beats, three springs, each given room to be seen. Driven together they
+            // cancel out: the drop is already a slab by the time the gap opens.
+            .animation(.spring(response: 0.46 * Controller.tempo, dampingFraction: 0.72), value: search.dripped)
+            .animation(.spring(response: 0.44 * Controller.tempo, dampingFraction: 0.46), value: search.separated)
+            .animation(.spring(response: 0.52 * Controller.tempo, dampingFraction: 0.62), value: search.shaped)
         }
         .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
         // Nothing here wraps the glass container in opacity, blur, scale or shadow. Every

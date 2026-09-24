@@ -134,8 +134,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // where the notch is, and the panel's level is above the menu bar anyway.
         guard let full = screen?.frame else { return }
         screenTop = full.maxY
+        // The notch is what is left when the two menu-bar areas beside it are taken out.
+        let aux = (screen?.auxiliaryTopLeftArea?.width ?? 0) + (screen?.auxiliaryTopRightArea?.width ?? 0)
+        search.notchWidth = aux > 0 ? max(0, full.width - aux) : 0
 
         // Start as one drop, with nothing in it.
+        search.dripped = false
         search.separated = false
         search.shaped = false
         search.contentVisible = false
@@ -159,18 +163,24 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.search.focusToken += 1
             self.search.visible = true
         }
-        // 2. the drop divides: a smaller droplet above, a larger one below, and the bridge
-        //    between them thins, snaps and rebounds
-        after(0.12) { self.search.separated = true }
-        // 3. each droplet stretches into what it was going to be — the bar and the panel
-        after(0.46) { self.search.shaped = true }
-        // 4. and only then do the contents arrive
-        after(0.88) { self.search.contentVisible = true }
+        // 2. it lets go of the notch and falls, rounding out as it lands
+        after(0.10) { self.search.dripped = true }
+        // 3. it divides: a small droplet above, a large one below, the bridge between them
+        //    thinning until it snaps
+        after(0.56) { self.search.separated = true }
+        // 4. each droplet stretches into what it was going to be — the bar and the panel
+        after(0.96) { self.search.shaped = true }
+        // 5. and only then do the contents arrive
+        after(1.42) { self.search.contentVisible = true }
     }
 
-    /// Runs `work` on the main queue after `delay`, dropped if the panel changed state.
+    /// Stretches every beat of the entrance, for watching it back frame by frame.
+    /// `SPOTVIBE_TEMPO=4` runs it at a quarter speed.
+    static let tempo = Double(ProcessInfo.processInfo.environment["SPOTVIBE_TEMPO"] ?? "") ?? 1
+
+    /// Runs `work` on the main queue after `delay`, scaled by the tempo.
     private func after(_ delay: TimeInterval, _ work: @escaping () -> Void) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay * Self.tempo, execute: work)
     }
 
     /// Pinned to the top edge of the screen. The content falls from the notch to its
@@ -194,12 +204,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         search.contentVisible = false
         // The way in, run backwards: the bar and the panel round back into droplets, the
         // droplets flow into one, and the drop fades.
-        after(0.08) { self.search.shaped = false }
+        after(0.06) { self.search.shaped = false }
         after(0.34) { self.search.separated = false }
+        after(0.58) { self.search.dripped = false }
 
         // The rejoin needs its own beat. Fading immediately outran the spring and the panel
         // vanished mid-merge, so the closing never read as liquid.
-        after(0.74) {
+        after(0.92) {
             guard !self.search.visible, self.panel.isVisible else { return }
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.18

@@ -47,6 +47,12 @@ public final class Search {
     /// union bridge the system draws between two glass shapes thins as they pull apart, and
     /// snaps when the gap passes the container's merge distance.
     public var separated = false
+    /// Width of this display's notch, 0 when it has none. The drop is born the width of
+    /// the notch, so it reads as having come out of it.
+    public var notchWidth: CGFloat = 0
+    /// First phase of the entrance: the drop hangs from the notch, stretched by its own
+    /// weight, then falls and rounds out where the panel will be.
+    public var dripped = false
     /// Second phase of the entrance: the two droplets stretch into the search bar and the
     /// panel. Kept apart from `separated` so the split reads first and the shapes after —
     /// driven together, the drops are already slabs by the time the gap opens.
@@ -208,6 +214,7 @@ public final class Search {
         lastTerm = ""
         text = ""
         launching = nil
+        dripped = false
         separated = false
         shaped = false
         contentVisible = false
