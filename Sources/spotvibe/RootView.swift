@@ -43,10 +43,11 @@ struct RootView: View {
     private static let notchTop: CGFloat = -96
     /// Past `mergeDistance`, so the bridge has snapped and the two are plainly apart.
     private static let restingGap: CGFloat = 26
-    /// A drop hanging from the notch is drawn out by its own weight and rounds as it
-    /// lands: narrower and much taller while it is still falling.
-    private static let hangingWidth: CGFloat = 0.72
-    private static let hangingHeight: CGFloat = 1.70
+    /// Barely drawn out at all. The corner radius is half the WIDTH, so any real
+    /// difference between the two turns the droplet into a vertical capsule instead of a
+    /// ball — which is exactly what it looked like. A falling drop is an egg, not a pill.
+    private static let hangingWidth: CGFloat = 0.96
+    private static let hangingHeight: CGFloat = 1.08
     /// How far apart two glass shapes still count as one body.
     private static let mergeDistance: CGFloat = 20
     /// While they are still droplets they stand further apart than they will as panels, so
@@ -72,10 +73,17 @@ struct RootView: View {
     private var dropW: CGFloat { lerp(Self.hangingWidth, 1, drip) }
     private var dropH: CGFloat { lerp(Self.hangingHeight, 1, drip) }
 
+    /// While it is one drop the upper droplet is the SAME size as the lower one, so the
+    /// two coincide exactly and their union is precisely that circle. Two concentric
+    /// circles of different diameters get unioned into a superellipse instead — which is
+    /// where the rounded-square look came from. The small-above/large-below difference
+    /// appears as they divide, which is when it is meant to be seen.
+    private var upperDrop: CGFloat { lerp(Self.listDrop, Self.fieldDrop, split) }
+
     /// Concentric: exactly minus half of both droplet heights, so their centres coincide
     /// and the union of the two circles is one circle. It follows the stretch, or the drop
     /// would split open while it is still falling.
-    private var mergedGap: CGFloat { -(Self.fieldDrop + Self.listDrop) * dropH / 2 }
+    private var mergedGap: CGFloat { -(upperDrop + Self.listDrop) * dropH / 2 }
 
     /// The union exists only for the morph. Left on at rest it fuses the two into a single
     /// slab and the search bar stops reading as a search bar, so once they are shaped they
@@ -95,8 +103,8 @@ struct RootView: View {
     private var dripOffset: CGFloat { lerp(Self.notchTop, Self.restingTop, drip) }
 
     private var fieldSize: CGSize {
-        CGSize(width: lerp(Self.fieldDrop * dropW, Self.panelWidth, shape),
-               height: lerp(Self.fieldDrop * dropH, Self.fieldHeight, shape))
+        CGSize(width: lerp(upperDrop * dropW, Self.panelWidth, shape),
+               height: lerp(upperDrop * dropH, Self.fieldHeight, shape))
     }
 
     private var listSize: CGSize {
@@ -116,7 +124,11 @@ struct RootView: View {
                          style: shape < 0.45 ? .circular : .continuous)
     }
 
-    private var fieldShape: RoundedRectangle { dropletShape(side: Self.fieldDrop, radius: 28) }
+    /// A capsule: radius is half the height, so the ends are true semicircles. Spotlight's
+    /// field is one, and at 28 mine read as a rounded box next to it.
+    private var fieldShape: RoundedRectangle {
+        dropletShape(side: upperDrop, radius: Self.fieldHeight / 2)
+    }
     private var listShape: RoundedRectangle { dropletShape(side: Self.listDrop, radius: 26) }
 
     /// The live system accent. Color.accentColor resolves to the asset-catalog accent and
@@ -191,9 +203,11 @@ struct RootView: View {
             // the bridge between the droplets snaps.
             // Three beats, three springs, each given room to be seen. Driven together they
             // cancel out: the drop is already a slab by the time the gap opens.
-            .animation(.spring(response: 0.46 * Controller.tempo, dampingFraction: 0.72), value: search.dripped)
-            .animation(.spring(response: 0.44 * Controller.tempo, dampingFraction: 0.46), value: search.separated)
-            .animation(.spring(response: 0.52 * Controller.tempo, dampingFraction: 0.62), value: search.shaped)
+            // Low damping on the landing so the drop wobbles as it settles, the way a real
+            // one does. tempo only stretches it for debugging; it is 1 by default.
+            .animation(.spring(response: 0.34 * Controller.tempo, dampingFraction: 0.48), value: search.dripped)
+            .animation(.spring(response: 0.26 * Controller.tempo, dampingFraction: 0.46), value: search.separated)
+            .animation(.spring(response: 0.30 * Controller.tempo, dampingFraction: 0.68), value: search.shaped)
         }
         .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
         // Nothing here wraps the glass container in opacity, blur, scale or shadow. Every

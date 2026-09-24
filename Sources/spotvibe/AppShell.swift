@@ -164,14 +164,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.search.visible = true
         }
         // 2. it lets go of the notch and falls, rounding out as it lands
-        after(0.10) { self.search.dripped = true }
+        after(0.02) { self.search.dripped = true }
         // 3. it divides: a small droplet above, a large one below, the bridge between them
         //    thinning until it snaps
-        after(0.56) { self.search.separated = true }
+        after(0.18) { self.search.separated = true }
         // 4. each droplet stretches into what it was going to be — the bar and the panel
-        after(0.96) { self.search.shaped = true }
+        after(0.36) { self.search.shaped = true }
         // 5. and only then do the contents arrive
-        after(1.42) { self.search.contentVisible = true }
+        after(0.60) { self.search.contentVisible = true }
     }
 
     /// Stretches every beat of the entrance, for watching it back frame by frame.
@@ -204,13 +204,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         search.contentVisible = false
         // The way in, run backwards: the bar and the panel round back into droplets, the
         // droplets flow into one, and the drop fades.
-        after(0.06) { self.search.shaped = false }
-        after(0.34) { self.search.separated = false }
-        after(0.58) { self.search.dripped = false }
+        after(0.04) { self.search.shaped = false }
+        after(0.18) { self.search.separated = false }
+        after(0.32) { self.search.dripped = false }
 
         // The rejoin needs its own beat. Fading immediately outran the spring and the panel
         // vanished mid-merge, so the closing never read as liquid.
-        after(0.92) {
+        after(0.52) {
             guard !self.search.visible, self.panel.isVisible else { return }
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.18
