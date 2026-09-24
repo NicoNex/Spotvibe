@@ -33,12 +33,20 @@ struct RootView: View {
     /// The window is a FIXED size and the content moves inside it. A window resize is a
     /// single AppKit step that cannot agree with a SwiftUI interpolation, so animating the
     /// gap in a self-sizing window would jolt the panel on every frame of the separation.
-    static let panelSize = CGSize(width: panelWidth + outerPadding * 2, height: 660)
+    /// Tall enough to reach from the top edge of the screen — the notch — down past the
+    /// panel's resting place, because the drop falls that whole way inside this window.
+    static let panelSize = CGSize(width: panelWidth + outerPadding * 2, height: 764)
+    /// Where the panel comes to rest, measured from the top of the screen.
+    private static let restingTop: CGFloat = 96
+    /// Where the drop starts: tucked up behind the notch, so it is seen seeping out of it.
+    /// Negative, so the window clips it and only the emerging part shows.
+    private static let notchTop: CGFloat = -96
     /// Past `mergeDistance`, so the bridge has snapped and the two are plainly apart.
     private static let restingGap: CGFloat = 26
-    /// Deep overlap: at rest the two droplets are one body, and the union has a single
-    /// silhouette to draw. Pulling apart takes them through the thinning bridge on the way.
-    private static let mergedGap: CGFloat = -178
+    /// Exactly `-(fieldDrop + listDrop) / 2`, which places the two droplets CONCENTRIC.
+    /// Anything less leaves them side by side and their union is an oval, not a bubble —
+    /// the reference is one round drop, so they have to start as literally one circle.
+    private static let mergedGap: CGFloat = -(fieldDrop + listDrop) / 2
     /// How far apart two glass shapes still count as one body.
     private static let mergeDistance: CGFloat = 20
     /// While they are still droplets they stand further apart than they will as panels, so
@@ -46,8 +54,8 @@ struct RootView: View {
     private static let splitGap: CGFloat = 54
     private static let fieldHeight: CGFloat = 92
     /// The two droplets the panel is born as: a small one above, a larger one below.
-    private static let fieldDrop: CGFloat = 150
-    private static let listDrop: CGFloat = 212
+    private static let fieldDrop: CGFloat = 170
+    private static let listDrop: CGFloat = 210
 
     /// Phase one: 0 = the two droplets sit inside each other as a single drop, 1 = they
     /// are apart. Only the gap reads from this.
@@ -66,6 +74,11 @@ struct RootView: View {
         lerp(Self.mergedGap, lerp(Self.splitGap, Self.restingGap, shape), split)
     }
 
+    /// The fall. The window's top edge sits on the top edge of the screen, so a negative
+    /// inset puts the drop behind the notch and the window clips whatever is still up
+    /// there — it seeps out, falls, and settles where the panel belongs.
+    private var dripOffset: CGFloat { lerp(Self.notchTop, Self.restingTop, split) }
+
     private var fieldSize: CGSize {
         CGSize(width: lerp(Self.fieldDrop, Self.panelWidth, shape),
                height: lerp(Self.fieldDrop, Self.fieldHeight, shape))
@@ -76,14 +89,20 @@ struct RootView: View {
                height: lerp(Self.listDrop, resultsHeight, shape))
     }
 
-    /// Fully round while it is a droplet, settling to the panel's own radius.
-    private var fieldShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: lerp(Self.fieldDrop / 2, 28, shape), style: .continuous)
+    /// A true circle while it is a droplet, settling to the panel's own radius.
+    ///
+    /// The style has to swap on the way. `.continuous` is Apple's squircle and never
+    /// reaches a circle: at half the side it still reads as a rounded square, which is
+    /// what made the droplet look boxy. `.circular` at half the side is an actual circle.
+    /// The swap happens once the shape has elongated enough for the two to be
+    /// indistinguishable, so the panel still rests on the squircle everything else uses.
+    private func dropletShape(side: CGFloat, radius: CGFloat) -> RoundedRectangle {
+        RoundedRectangle(cornerRadius: lerp(side / 2, radius, shape),
+                         style: shape < 0.45 ? .circular : .continuous)
     }
 
-    private var listShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: lerp(Self.listDrop / 2, 26, shape), style: .continuous)
-    }
+    private var fieldShape: RoundedRectangle { dropletShape(side: Self.fieldDrop, radius: 28) }
+    private var listShape: RoundedRectangle { dropletShape(side: Self.listDrop, radius: 26) }
 
     /// The live system accent. Color.accentColor resolves to the asset-catalog accent and
     /// only falls back to the system one, so it is not the same guarantee.
@@ -148,7 +167,8 @@ struct RootView: View {
                             .glassEffectTransition(.matchedGeometry)
                     }
                 }
-                .padding(Self.outerPadding)
+                .padding(.horizontal, Self.outerPadding)
+                .padding(.top, dripOffset)
             }
             // Two springs, both lightly damped, and the overshoot IS the bounce: each value
             // runs past its resting point and settles back, the way liquid rebounds after

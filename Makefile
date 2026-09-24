@@ -9,11 +9,13 @@ RELEASE  := .build/release/$(BIN)
 
 .PHONY: all build app dmg run test clean
 
-all: dmg
+## Default: just the terminal binary. `make app` builds the bundle, `make dmg` the image.
+all: build
 
-## build — release binary
+## build — release binary at .build/release/spotvibe
 build:
 	swift build -c release
+	@echo "built $(RELEASE)"
 
 ## app — .app bundle (agent app: menu bar only, no Dock icon)
 app: build

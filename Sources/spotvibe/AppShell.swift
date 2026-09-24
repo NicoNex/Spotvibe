@@ -52,7 +52,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let search = Search()
     private var panel: Panel!
     private var status: NSStatusItem!
-    private var topY: CGFloat = 0
+    /// The top edge of the screen, notch included — the window is pinned to it.
+    private var screenTop: CGFloat = 0
 
     func applicationDidFinishLaunching(_: Notification) {
         panel = Panel(contentRect: NSRect(origin: .zero, size: RootView.panelSize),
@@ -129,8 +130,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // screen, not the one being looked at. The pointer is the better guess.
         let point = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main ?? NSScreen.screens.first
-        guard let visible = screen?.visibleFrame else { return }
-        topY = visible.maxY - visible.height * 0.10
+        // frame, not visibleFrame: the window has to reach the physical top of the display,
+        // where the notch is, and the panel's level is above the menu bar anyway.
+        guard let full = screen?.frame else { return }
+        screenTop = full.maxY
 
         // Start as one drop, with nothing in it.
         search.separated = false
@@ -170,12 +173,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    /// The panel grows downwards as results arrive, so anchor it by its top edge.
+    /// Pinned to the top edge of the screen. The content falls from the notch to its
+    /// resting place inside the window, so the window itself never has to move.
     private func reposition() {
-        guard let visible = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else { return }
+        guard let full = panel.screen?.frame ?? NSScreen.main?.frame else { return }
         let size = panel.frame.size
-        panel.setFrameOrigin(NSPoint(x: visible.midX - size.width / 2,
-                                     y: max(visible.minY, min(topY - size.height, visible.maxY - size.height))))
+        let top = screenTop == 0 ? full.maxY : screenTop
+        panel.setFrameOrigin(NSPoint(x: full.midX - size.width / 2, y: top - size.height))
     }
 
     func windowDidResize(_: Notification) { reposition() }
