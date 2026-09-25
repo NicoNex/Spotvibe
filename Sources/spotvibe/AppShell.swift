@@ -96,7 +96,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 (9.2, { NSApp.terminate(nil) }),
             ]
             for (at, step) in steps {
-                DispatchQueue.main.asyncAfter(deadline: .now() + at, execute: step)
+                // Scaled too: leaving these unscaled while the animations stretch makes an
+                // open collide with the close before it, and the recording is unreadable.
+                DispatchQueue.main.asyncAfter(deadline: .now() + at * Self.tempo, execute: step)
             }
             return
         }
@@ -202,19 +204,22 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // and only then does the drop fade. `expanded` deliberately stays true — clearing
         // it would empty the hierarchy mid-animation.
         search.contentVisible = false
-        // The bar and the panel round back into droplets, the droplets flow into one, and
-        // then the drop falls away downwards rather than retracing its path to the notch.
+        // The bar and the panel round back into droplets, the droplets flow into one drop
+        // at the centre, and that drop swells and bursts.
         after(0.04) { self.search.shaped = false }
         after(0.20) { self.search.separated = false }
-        after(0.44) { self.search.falling = true }
+        after(0.30) { self.search.dripped = false }
+        after(0.48) { self.search.popping = true }
 
         // The rejoin needs its own beat. Fading immediately outran the spring and the panel
         // vanished mid-merge, so the closing never read as liquid.
+        // Cut, not a fade. A soap bubble is there and then it is not, so 0.07s reads as
+        // gone rather than as something that faded quickly.
         after(0.60) {
             guard !self.search.visible, self.panel.isVisible else { return }
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.24
-                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                context.duration = 0.07 * Self.tempo
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
                 self.panel.animator().alphaValue = 0
             } completionHandler: {
                 guard !self.search.visible else { return }

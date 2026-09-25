@@ -39,8 +39,8 @@ struct RootView: View {
     /// Where the panel comes to rest, measured from the top of the screen. Chosen so the
     /// drop lands around the middle of the display rather than up under the notch.
     private static let restingTop: CGFloat = 188
-    /// Far enough below to be well clear before the fade finishes carrying it off.
-    private static let exitBottom: CGFloat = 620
+    /// How much the drop swells in the instant before it bursts.
+    private static let popSwell: CGFloat = 1.26
     /// How far the lower droplet descends while the upper one is still held in the notch.
     /// This is the neck: the union's bridge spans it, thinning as the gap opens, and snaps
     /// once the gap passes the merge distance.
@@ -89,8 +89,11 @@ struct RootView: View {
         drop + (panel - drop) * t
     }
 
-    private var dropW: CGFloat { lerp(Self.hangingWidth, 1, drip) }
-    private var dropH: CGFloat { lerp(Self.hangingHeight, 1, drip) }
+    /// Surface tension gives out all at once: the drop swells for an instant, then goes.
+    private var pop: CGFloat { search.popping ? Self.popSwell : 1 }
+
+    private var dropW: CGFloat { lerp(Self.hangingWidth, 1, drip) * pop }
+    private var dropH: CGFloat { lerp(Self.hangingHeight, 1, drip) * pop }
 
     /// What is left hanging at the notch once the mass has flowed down.
     private static let neckBead: CGFloat = 52
@@ -130,9 +133,6 @@ struct RootView: View {
     /// inset puts the drop behind the notch and the window clips whatever is still up
     /// there — it seeps out, falls, and settles where the panel belongs.
     private var dripOffset: CGFloat {
-        // Leaving, it keeps going the way it came in. Retracing its path back up to the
-        // notch reads as a rewind; falling off the bottom reads as gravity.
-        guard !search.falling else { return Self.exitBottom }
         // Driven by `shape`, not by `drip`: through the whole fall the upper droplet stays
         // up in the notch and only the lower one descends. That is what leaves a neck
         // between them — and it costs no third glass shape, which is the one thing that
@@ -253,9 +253,9 @@ struct RootView: View {
             // Low damping on the landing so the drop wobbles as it settles, the way a real
             // one does. tempo only stretches it for debugging; it is 1 by default.
             .animation(.spring(response: 0.34 * Controller.tempo, dampingFraction: 0.48), value: search.dripped)
-            // easeIn, not a spring: something falling accelerates, it does not overshoot
-            // and come back.
-            .animation(.easeIn(duration: 0.34 * Controller.tempo), value: search.falling)
+            // easeOut and short: a bubble stretches for a moment and lets go. A spring
+            // would bring it back, which is the one thing a burst never does.
+            .animation(.easeOut(duration: 0.13 * Controller.tempo), value: search.popping)
             // Smoother than the rest on purpose: the neck has to be seen thinning, and a
             // snappy spring crosses the whole merge distance before the eye catches it.
             .animation(.spring(response: 0.38 * Controller.tempo, dampingFraction: 0.62), value: search.separated)
