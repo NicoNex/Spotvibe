@@ -39,6 +39,8 @@ struct RootView: View {
     /// Where the panel comes to rest, measured from the top of the screen. Chosen so the
     /// drop lands around the middle of the display rather than up under the notch.
     private static let restingTop: CGFloat = 188
+    /// Far enough below to be well clear before the fade finishes carrying it off.
+    private static let exitBottom: CGFloat = 620
     /// Where the drop starts: tucked up behind the notch, so it is seen seeping out of it.
     /// Negative, so the window clips it and only the emerging part shows.
     private static let notchTop: CGFloat = -96
@@ -107,7 +109,11 @@ struct RootView: View {
     /// The fall. The window's top edge sits on the top edge of the screen, so a negative
     /// inset puts the drop behind the notch and the window clips whatever is still up
     /// there — it seeps out, falls, and settles where the panel belongs.
-    private var dripOffset: CGFloat { lerp(Self.notchTop, Self.restingTop, drip) }
+    private var dripOffset: CGFloat {
+        // Leaving, it keeps going the way it came in. Retracing its path back up to the
+        // notch reads as a rewind; falling off the bottom reads as gravity.
+        search.falling ? Self.exitBottom : lerp(Self.notchTop, Self.restingTop, drip)
+    }
 
     private var fieldSize: CGSize {
         CGSize(width: lerp(upperDrop * dropW, Self.panelWidth, shape),
@@ -136,7 +142,10 @@ struct RootView: View {
     private var fieldShape: RoundedRectangle {
         dropletShape(side: upperDrop, radius: Self.fieldHeight / 2)
     }
-    private var listShape: RoundedRectangle { dropletShape(side: Self.listDrop, radius: 26) }
+    /// 40, not 26. Lensing happens at the rim, and on a slab this size the rim is a
+    /// hairline around a large frosted field — a wider curve puts more of the edge at an
+    /// angle where it actually bends what is behind it.
+    private var listShape: RoundedRectangle { dropletShape(side: Self.listDrop, radius: 40) }
 
     /// The live system accent. Color.accentColor resolves to the asset-catalog accent and
     /// only falls back to the system one, so it is not the same guarantee.
@@ -149,17 +158,19 @@ struct RootView: View {
     /// Transparency swaps the glass out for a solid window background.
     private var glass: Glass {
         guard !search.reduceTransparency else { return .identity }
-        // A droplet is nearly all backdrop: .clear is the transparent member of the family,
-        // and it takes no tint, so the drop reads as a lens rather than a panel. .opacity()
-        // is not an option here — it forces the subtree offscreen and the glass stops
-        // sampling the live backdrop, which is the whole effect.
+        // A droplet is nearly all backdrop: .clear is the transparent member of the family
+        // and takes no tint, so it reads as a lens. .opacity() is not an option here — it
+        // forces the subtree offscreen and the glass stops sampling the live backdrop,
+        // which is the whole effect.
         guard search.shaped else { return .clear.interactive() }
-        // interactive() is the one thing macOS 27 added to the material (AppKit spells it
-        // NSGlassEffectView.effectIsInteractive, API_AVAILABLE(macos(27.0))): the glass
-        // answers the light with a live specular response instead of a static sheen, which
-        // is most of what makes the rim read as a solid edge rather than a drawn outline.
-        // The tint is deliberately slight — pigment fills the specular in and flattens it.
-        return .regular.tint(accent.opacity(0.07 * search.glassTint)).interactive()
+        // No tint. .regular is documented as the adaptive, legible variant and it frosts
+        // the backdrop by design — it will never lens the way .clear does. Pigment on top
+        // of that fills in the specular highlight, which is the one thing still selling the
+        // rim as a solid edge, so the accent is carried by the selection instead.
+        // interactive() stays: it is the single addition macOS 27 made to the material
+        // (AppKit spells it NSGlassEffectView.effectIsInteractive) and gives the glass a
+        // live specular response rather than a static sheen.
+        return .regular.interactive()
     }
 
     private var solidFallback: AnyShapeStyle {
@@ -216,6 +227,9 @@ struct RootView: View {
             // Low damping on the landing so the drop wobbles as it settles, the way a real
             // one does. tempo only stretches it for debugging; it is 1 by default.
             .animation(.spring(response: 0.34 * Controller.tempo, dampingFraction: 0.48), value: search.dripped)
+            // easeIn, not a spring: something falling accelerates, it does not overshoot
+            // and come back.
+            .animation(.easeIn(duration: 0.34 * Controller.tempo), value: search.falling)
             // Smoother than the rest on purpose: the neck has to be seen thinning, and a
             // snappy spring crosses the whole merge distance before the eye catches it.
             .animation(.spring(response: 0.38 * Controller.tempo, dampingFraction: 0.62), value: search.separated)

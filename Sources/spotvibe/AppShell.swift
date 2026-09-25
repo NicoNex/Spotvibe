@@ -202,18 +202,18 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // and only then does the drop fade. `expanded` deliberately stays true — clearing
         // it would empty the hierarchy mid-animation.
         search.contentVisible = false
-        // The way in, run backwards: the bar and the panel round back into droplets, the
-        // droplets flow into one, and the drop fades.
+        // The bar and the panel round back into droplets, the droplets flow into one, and
+        // then the drop falls away downwards rather than retracing its path to the notch.
         after(0.04) { self.search.shaped = false }
-        after(0.18) { self.search.separated = false }
-        after(0.32) { self.search.dripped = false }
+        after(0.20) { self.search.separated = false }
+        after(0.44) { self.search.falling = true }
 
         // The rejoin needs its own beat. Fading immediately outran the spring and the panel
         // vanished mid-merge, so the closing never read as liquid.
-        after(0.66) {
+        after(0.60) {
             guard !self.search.visible, self.panel.isVisible else { return }
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.18
+                context.duration = 0.24
                 context.timingFunction = CAMediaTimingFunction(name: .easeIn)
                 self.panel.animator().alphaValue = 0
             } completionHandler: {

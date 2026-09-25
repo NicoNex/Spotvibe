@@ -50,6 +50,9 @@ public final class Search {
     /// Width of this display's notch, 0 when it has none. The drop is born the width of
     /// the notch, so it reads as having come out of it.
     public var notchWidth: CGFloat = 0
+    /// The exit: once the two have flowed back into one drop, it falls away downwards
+    /// instead of retracing its way back up to the notch.
+    public var falling = false
     /// First phase of the entrance: the drop hangs from the notch, stretched by its own
     /// weight, then falls and rounds out where the panel will be.
     public var dripped = false
@@ -215,6 +218,7 @@ public final class Search {
         text = ""
         launching = nil
         dripped = false
+        falling = false
         separated = false
         shaped = false
         contentVisible = false
