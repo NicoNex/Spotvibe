@@ -169,9 +169,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         //    thinning until it snaps
         after(0.18) { self.search.separated = true }
         // 4. each droplet stretches into what it was going to be — the bar and the panel
-        after(0.48) { self.search.shaped = true }
+        after(0.62) { self.search.shaped = true }
         // 5. and only then do the contents arrive
-        after(0.72) { self.search.contentVisible = true }
+        after(0.86) { self.search.contentVisible = true }
     }
 
     /// Stretches every beat of the entrance, for watching it back frame by frame.
@@ -210,7 +210,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // The rejoin needs its own beat. Fading immediately outran the spring and the panel
         // vanished mid-merge, so the closing never read as liquid.
-        after(0.60) {
+        after(0.66) {
             guard !self.search.visible, self.panel.isVisible else { return }
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.18

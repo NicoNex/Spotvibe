@@ -35,9 +35,10 @@ struct RootView: View {
     /// gap in a self-sizing window would jolt the panel on every frame of the separation.
     /// Tall enough to reach from the top edge of the screen — the notch — down past the
     /// panel's resting place, because the drop falls that whole way inside this window.
-    static let panelSize = CGSize(width: panelWidth + outerPadding * 2, height: 764)
-    /// Where the panel comes to rest, measured from the top of the screen.
-    private static let restingTop: CGFloat = 96
+    static let panelSize = CGSize(width: panelWidth + outerPadding * 2, height: 850)
+    /// Where the panel comes to rest, measured from the top of the screen. Chosen so the
+    /// drop lands around the middle of the display rather than up under the notch.
+    private static let restingTop: CGFloat = 188
     /// Where the drop starts: tucked up behind the notch, so it is seen seeping out of it.
     /// Negative, so the window clips it and only the emerging part shows.
     private static let notchTop: CGFloat = -96
@@ -54,6 +55,8 @@ struct RootView: View {
     /// Wide is affordable here only because the union is switched off once they are shaped;
     /// left on, a resting gap of 26 would sit inside it and fuse them back together.
     private static let mergeDistance: CGFloat = 76
+    /// Must stay under `restingGap`, or the two settle back into one body.
+    private static let restingMerge: CGFloat = 6
     /// While they are still droplets they stand further apart than they will as panels, so
     /// the moment of being TWO of them is unmistakable before either starts to stretch.
     private static let splitGap: CGFloat = 108
@@ -175,7 +178,10 @@ struct RootView: View {
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onClose)
 
-            GlassEffectContainer(spacing: Self.mergeDistance) {
+            // The spacing IS the merge distance, and it merges nearby glass whether or not
+            // a union id is set — so a wide one left in place refused the bar and the panel
+            // back into a single slab at rest. Wide only while they are coming apart.
+            GlassEffectContainer(spacing: search.shaped ? Self.restingMerge : Self.mergeDistance) {
                 VStack(spacing: gap) {
                     field
                         // Animating a frame is layout, not a transform: it does not force
