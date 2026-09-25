@@ -41,6 +41,10 @@ struct RootView: View {
     private static let restingTop: CGFloat = 188
     /// Far enough below to be well clear before the fade finishes carrying it off.
     private static let exitBottom: CGFloat = 620
+    /// How far the lower droplet descends while the upper one is still held in the notch.
+    /// This is the neck: the union's bridge spans it, thinning as the gap opens, and snaps
+    /// once the gap passes the merge distance.
+    private static let fallGap: CGFloat = 286
     /// Where the drop starts: tucked up behind the notch, so it is seen seeping out of it.
     /// Negative, so the window clips it and only the emerging part shows.
     private static let notchTop: CGFloat = -96
@@ -62,7 +66,7 @@ struct RootView: View {
     /// While they are still droplets they stand further apart than they will as panels, so
     /// the moment of being TWO of them is unmistakable before either starts to stretch.
     private static let splitGap: CGFloat = 108
-    private static let fieldHeight: CGFloat = 92
+    private static let fieldHeight: CGFloat = 74
     /// The two droplets the panel is born as: a small one above, a larger one below.
     private static let fieldDrop: CGFloat = 128
     private static let listDrop: CGFloat = 232
@@ -103,7 +107,12 @@ struct RootView: View {
     /// proximity, so pulling them apart makes the system's own bridge between them thin
     /// out and snap — there is no hand-drawn neck anywhere in here.
     private var gap: CGFloat {
-        lerp(mergedGap, lerp(Self.splitGap, Self.restingGap, shape), split)
+        // Three stages in one expression: merged inside each other, then pulled apart by
+        // the fall — that stretch is the neck — then closed up to the resting gap as the
+        // droplets become the bar and the panel.
+        let fallen = lerp(mergedGap, Self.fallGap, drip)
+        let apart = lerp(fallen, Self.splitGap, split)
+        return lerp(apart, Self.restingGap, shape)
     }
 
     /// The fall. The window's top edge sits on the top edge of the screen, so a negative
@@ -112,7 +121,12 @@ struct RootView: View {
     private var dripOffset: CGFloat {
         // Leaving, it keeps going the way it came in. Retracing its path back up to the
         // notch reads as a rewind; falling off the bottom reads as gravity.
-        search.falling ? Self.exitBottom : lerp(Self.notchTop, Self.restingTop, drip)
+        guard !search.falling else { return Self.exitBottom }
+        // Driven by `shape`, not by `drip`: through the whole fall the upper droplet stays
+        // up in the notch and only the lower one descends. That is what leaves a neck
+        // between them — and it costs no third glass shape, which is the one thing that
+        // reliably pins the main thread inside NSHostingView's key-view walk.
+        return lerp(Self.notchTop, Self.restingTop, shape)
     }
 
     private var fieldSize: CGSize {
@@ -255,11 +269,11 @@ struct RootView: View {
     private var field: some View {
         HStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 20, weight: .medium))
+                .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(.secondary)
             TextField("Cerca app e file", text: query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 25, weight: .regular))
+                .font(.system(size: 22, weight: .regular))
                 .foregroundStyle(.primary)
                 .focused(_focused.projectedValue)
                 .onSubmit(activate)
