@@ -48,11 +48,15 @@ struct RootView: View {
     /// ball — which is exactly what it looked like. A falling drop is an egg, not a pill.
     private static let hangingWidth: CGFloat = 0.96
     private static let hangingHeight: CGFloat = 1.08
-    /// How far apart two glass shapes still count as one body.
-    private static let mergeDistance: CGFloat = 20
+    /// How far apart two glass shapes still count as one body — the container's spacing.
+    /// This is what decides how LONG the neck is visible: the system draws its bridge only
+    /// while the gap is under this, so at 20 the neck was a single frame of a 270pt travel.
+    /// Wide is affordable here only because the union is switched off once they are shaped;
+    /// left on, a resting gap of 26 would sit inside it and fuse them back together.
+    private static let mergeDistance: CGFloat = 76
     /// While they are still droplets they stand further apart than they will as panels, so
     /// the moment of being TWO of them is unmistakable before either starts to stretch.
-    private static let splitGap: CGFloat = 54
+    private static let splitGap: CGFloat = 108
     private static let fieldHeight: CGFloat = 92
     /// The two droplets the panel is born as: a small one above, a larger one below.
     private static let fieldDrop: CGFloat = 128
@@ -206,7 +210,9 @@ struct RootView: View {
             // Low damping on the landing so the drop wobbles as it settles, the way a real
             // one does. tempo only stretches it for debugging; it is 1 by default.
             .animation(.spring(response: 0.34 * Controller.tempo, dampingFraction: 0.48), value: search.dripped)
-            .animation(.spring(response: 0.26 * Controller.tempo, dampingFraction: 0.46), value: search.separated)
+            // Smoother than the rest on purpose: the neck has to be seen thinning, and a
+            // snappy spring crosses the whole merge distance before the eye catches it.
+            .animation(.spring(response: 0.38 * Controller.tempo, dampingFraction: 0.62), value: search.separated)
             .animation(.spring(response: 0.30 * Controller.tempo, dampingFraction: 0.68), value: search.shaped)
         }
         .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
