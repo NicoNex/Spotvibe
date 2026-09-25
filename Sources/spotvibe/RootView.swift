@@ -55,14 +55,20 @@ struct RootView: View {
     /// ball — which is exactly what it looked like. A falling drop is an egg, not a pill.
     private static let hangingWidth: CGFloat = 0.96
     private static let hangingHeight: CGFloat = 1.08
-    /// How far apart two glass shapes still count as one body — the container's spacing.
-    /// This is what decides how LONG the neck is visible: the system draws its bridge only
-    /// while the gap is under this, so at 20 the neck was a single frame of a 270pt travel.
-    /// Wide is affordable here only because the union is switched off once they are shaped;
-    /// left on, a resting gap of 26 would sit inside it and fuse them back together.
-    private static let mergeDistance: CGFloat = 76
+    /// How far apart two glass shapes still count as one body — the container's spacing,
+    /// and the thing that decides how long the neck between them lasts. The system draws
+    /// its bridge only while the gap is under this, so it has to span whatever is being
+    /// crossed at the time: at 76 against a 286pt fall the neck vanished after the first
+    /// quarter, which is why it never looked like it was thinning.
+    private static let fallMerge: CGFloat = 340
+    private static let splitMerge: CGFloat = 96
     /// Must stay under `restingGap`, or the two settle back into one body.
     private static let restingMerge: CGFloat = 6
+
+    private var mergeDistance: CGFloat {
+        if search.shaped { return Self.restingMerge }
+        return search.separated ? Self.splitMerge : Self.fallMerge
+    }
     /// While they are still droplets they stand further apart than they will as panels, so
     /// the moment of being TWO of them is unmistakable before either starts to stretch.
     private static let splitGap: CGFloat = 108
@@ -86,16 +92,21 @@ struct RootView: View {
     private var dropW: CGFloat { lerp(Self.hangingWidth, 1, drip) }
     private var dropH: CGFloat { lerp(Self.hangingHeight, 1, drip) }
 
-    /// While it is one drop the upper droplet is the SAME size as the lower one, so the
-    /// two coincide exactly and their union is precisely that circle. Two concentric
-    /// circles of different diameters get unioned into a superellipse instead — which is
-    /// where the rounded-square look came from. The small-above/large-below difference
-    /// appears as they divide, which is when it is meant to be seen.
-    private var upperDrop: CGFloat { lerp(Self.listDrop, Self.fieldDrop, split) }
+    /// What is left hanging at the notch once the mass has flowed down.
+    private static let neckBead: CGFloat = 52
 
-    /// Concentric: exactly minus half of both droplet heights, so their centres coincide
-    /// and the union of the two circles is one circle. It follows the stretch, or the drop
-    /// would split open while it is still falling.
+    /// While it is one drop the upper droplet is the SAME size as the lower one, so the two
+    /// coincide exactly and their union is precisely that circle — two concentric circles
+    /// of different diameters get unioned into a superellipse instead, which is where the
+    /// rounded-square look came from.
+    ///
+    /// Then, as the lower one falls away, this one EMPTIES into it. That is what makes the
+    /// neck thin: the system's bridge is no wider than the smaller of the two shapes it
+    /// spans, so a top that is draining pinches the column off. Moving the two ends further
+    /// apart, on its own, only makes a longer column of the same width — which is exactly
+    /// what it looked like.
+    private var upperDrop: CGFloat { lerp(Self.listDrop, Self.neckBead, drip) }
+
     private var mergedGap: CGFloat { -(upperDrop + Self.listDrop) * dropH / 2 }
 
     /// The union exists only for the morph. Left on at rest it fuses the two into a single
@@ -177,14 +188,15 @@ struct RootView: View {
         // forces the subtree offscreen and the glass stops sampling the live backdrop,
         // which is the whole effect.
         guard search.shaped else { return .clear.interactive() }
-        // No tint. .regular is documented as the adaptive, legible variant and it frosts
-        // the backdrop by design — it will never lens the way .clear does. Pigment on top
-        // of that fills in the specular highlight, which is the one thing still selling the
-        // rim as a solid edge, so the accent is carried by the selection instead.
+        // The tint follows System Settings > Appearance, and nothing else: NSGlassTintAmount
+        // is the only key the system exposes for that slider. At 0 the glass takes no
+        // pigment at all, which is also when the rim reads most three-dimensional — pigment
+        // fills in the specular highlight. Turning that slider down IS the control for it.
+        //
         // interactive() stays: it is the single addition macOS 27 made to the material
         // (AppKit spells it NSGlassEffectView.effectIsInteractive) and gives the glass a
         // live specular response rather than a static sheen.
-        return .regular.interactive()
+        return .regular.tint(accent.opacity(0.16 * search.glassTint)).interactive()
     }
 
     private var solidFallback: AnyShapeStyle {
@@ -206,7 +218,7 @@ struct RootView: View {
             // The spacing IS the merge distance, and it merges nearby glass whether or not
             // a union id is set — so a wide one left in place refused the bar and the panel
             // back into a single slab at rest. Wide only while they are coming apart.
-            GlassEffectContainer(spacing: search.shaped ? Self.restingMerge : Self.mergeDistance) {
+            GlassEffectContainer(spacing: mergeDistance) {
                 VStack(spacing: gap) {
                     field
                         // Animating a frame is layout, not a transform: it does not force
