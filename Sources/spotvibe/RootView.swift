@@ -41,15 +41,30 @@ struct RootView: View {
     private static let restingTop: CGFloat = 188
     /// How much the drop swells in the instant before it bursts.
     private static let popSwell: CGFloat = 1.26
+    /// Squash and stretch on landing. Done with the frame and the shape's own radii, never
+    /// with scaleEffect: a transform forces the subtree offscreen and the glass stops
+    /// sampling the live backdrop, which is the whole effect.
+    private static let impactWiden: CGFloat = 1.34
+    private static let impactFlatten: CGFloat = 0.62
 
     // The hanging drop, while it is still a drop. One glass shape, authored by PendantDrop,
     // rather than two shapes the union tries to bridge — see that file for why.
+    private var squashW: CGFloat { search.impacting ? Self.impactWiden : 1 }
+    private var squashH: CGFloat { search.impacting ? Self.impactFlatten : 1 }
+
     private var dropTopRadius: CGFloat { lerp(Self.listDrop / 2, Self.neckBead / 2, drip) * pop }
-    private var dropBottomRadius: CGFloat { Self.listDrop / 2 * pop }
+    private var dropBottomRadius: CGFloat { Self.listDrop / 2 * pop * squashH }
     /// From "as wide as the drop" (no neck at all, just one ball) down to nothing.
     private var dropWaist: CGFloat { lerp(Self.listDrop / 2, 0, drip) * pop }
-    private var dropWidth: CGFloat { Self.listDrop * pop }
-    private var dropHeight: CGFloat { lerp(Self.listDrop, Self.fallGap + Self.listDrop, drip) * pop }
+    private var dropWidth: CGFloat { Self.listDrop * pop * squashW }
+    private var dropHeight: CGFloat {
+        let fallen = lerp(Self.listDrop, Self.fallGap + Self.listDrop, drip)
+        // Only the bulb flattens; the distance already fallen is not undone by the impact.
+        return (fallen - Self.listDrop + Self.listDrop * squashH) * pop
+    }
+
+    /// Where the bulb's underside meets the floor, measured from the top of the window.
+    private var impactY: CGFloat { dripOffset + dropHeight }
 
     /// The bar's outline once it is a bar; the whole pendant drop before that.
     private var fieldGlassShape: AnyShape {
@@ -232,6 +247,20 @@ struct RootView: View {
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onClose)
 
+            // The ring thrown off on impact. A plain stroked circle on purpose: every glass
+            // view added to the container is another shape in NSHostingView's key-view walk,
+            // and a third one pins the main thread on launch. scaleEffect is safe here
+            // precisely because this is not glass.
+            if search.impacting {
+                Circle()
+                    .stroke(Color.white.opacity(0.55), lineWidth: 2.5)
+                    .frame(width: Self.listDrop * 0.9, height: Self.listDrop * 0.9)
+                    .offset(y: impactY - Self.listDrop * 0.45)
+                    .allowsHitTesting(false)
+                    .transition(.asymmetric(insertion: .identity,
+                                            removal: .scale(scale: 3.2).combined(with: .opacity)))
+            }
+
             // The spacing IS the merge distance, and it merges nearby glass whether or not
             // a union id is set — so a wide one left in place refused the bar and the panel
             // back into a single slab at rest. Wide only while they are coming apart.
@@ -252,6 +281,12 @@ struct RootView: View {
                     if search.rowCount > 0, search.expanded, search.shaped {
                         results
                             .frame(width: listSize.width, height: listSize.height)
+                            // Clipped to the slab, and clipped BEFORE the glass: a selected
+                            // cell scrolled past the rounded edge was drawing outside the
+                            // panel. Applied after .glassEffect it would clip the glass
+                            // layer itself, which rasterises it offscreen and costs the
+                            // backdrop sampling.
+                            .clipShape(listShape)
                             .background(solidFallback, in: listShape)
                             .glassEffect(glass, in: listShape)
                             .glassEffectID("results", in: _ns.wrappedValue)
@@ -270,7 +305,12 @@ struct RootView: View {
             // cancel out: the drop is already a slab by the time the gap opens.
             // Low damping on the landing so the drop wobbles as it settles, the way a real
             // one does. tempo only stretches it for debugging; it is 1 by default.
-            .animation(.spring(response: 0.34 * Controller.tempo, dampingFraction: 0.48), value: search.dripped)
+            // Gravity, not a spring. A falling drop accelerates all the way down and stops
+            // dead; a spring eases out and overshoots back, which is the opposite. The
+            // landing is sold by the squash below instead.
+            .animation(.timingCurve(0.45, 0, 0.95, 0.4, duration: 0.42 * Controller.tempo),
+                       value: search.dripped)
+            .animation(.easeOut(duration: 0.42 * Controller.tempo), value: search.impacting)
             // easeOut and short: a bubble stretches for a moment and lets go. A spring
             // would bring it back, which is the one thing a burst never does.
             .animation(.easeOut(duration: 0.13 * Controller.tempo), value: search.popping)

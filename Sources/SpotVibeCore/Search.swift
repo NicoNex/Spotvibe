@@ -50,6 +50,8 @@ public final class Search {
     /// Width of this display's notch, 0 when it has none. The drop is born the width of
     /// the notch, so it reads as having come out of it.
     public var notchWidth: CGFloat = 0
+    /// True for the instant the falling drop lands: it squashes flat and throws a ring.
+    public var impacting = false
     /// The exit: once the two have flowed back into one drop, it swells for an instant and
     /// bursts. A bubble does not fade — it is there and then it is not — so this drives a
     /// quick swell and the window's alpha is cut rather than faded.
@@ -220,6 +222,7 @@ public final class Search {
         launching = nil
         dripped = false
         popping = false
+        impacting = false
         separated = false
         shaped = false
         contentVisible = false

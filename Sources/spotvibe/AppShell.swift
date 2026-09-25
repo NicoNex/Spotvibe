@@ -169,11 +169,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         after(0.02) { self.search.dripped = true }
         // 3. it divides: a small droplet above, a large one below, the bridge between them
         //    thinning until it snaps
-        after(0.40) { self.search.separated = true }
+        // 2b. it lands: the bulb squashes flat and throws a ring
+        after(0.44) { self.search.impacting = true }
+        after(0.56) { self.search.impacting = false }
+        after(0.62) { self.search.separated = true }
         // 4. each droplet stretches into what it was going to be — the bar and the panel
-        after(0.56) { self.search.shaped = true }
+        after(0.74) { self.search.shaped = true }
         // 5. and only then do the contents arrive
-        after(0.86) { self.search.contentVisible = true }
+        after(1.02) { self.search.contentVisible = true }
     }
 
     /// Stretches every beat of the entrance, for watching it back frame by frame.
