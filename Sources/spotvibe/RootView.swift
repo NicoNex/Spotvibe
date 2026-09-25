@@ -41,16 +41,34 @@ struct RootView: View {
     private static let restingTop: CGFloat = 188
     /// How much the drop swells in the instant before it bursts.
     private static let popSwell: CGFloat = 1.26
-    /// Squash and stretch on landing. Done with the frame and the shape's own radii, never
-    /// with scaleEffect: a transform forces the subtree offscreen and the glass stops
-    /// sampling the live backdrop, which is the whole effect.
-    private static let impactWiden: CGFloat = 1.34
-    private static let impactFlatten: CGFloat = 0.62
+    /// Drawn out by its own speed just after the snap, and volume-preserving: what it
+    /// gains in height it gives up in width. Done with the frame and the shape's own radii,
+    /// never with scaleEffect — a transform forces the subtree offscreen and the glass
+    /// stops sampling the live backdrop, which is the whole effect.
+    private static let stretchTall: CGFloat = 1.30
+    private static let stretchNarrow: CGFloat = 0.82
+    /// How far it drifts while it hangs there, and how much its sphericity wanders.
+    private static let breathRise: CGFloat = 5
+    private static let breathRound: CGFloat = 0.02
 
     // The hanging drop, while it is still a drop. One glass shape, authored by PendantDrop,
     // rather than two shapes the union tries to bridge — see that file for why.
-    private var squashW: CGFloat { search.impacting ? Self.impactWiden : 1 }
-    private var squashH: CGFloat { search.impacting ? Self.impactFlatten : 1 }
+    /// One value for the whole wobble. It is driven to 1 on arrival by a spring damped at
+    /// 0.3, so it overshoots past 1 and rings — the drop squashes, rebounds and settles.
+    /// Width takes the inverse, which is what makes it read as liquid rather than as a
+    /// picture being resized.
+    private var stretchH: CGFloat {
+        if search.arrived { return 1 + (search.breathing ? Self.breathRound : 0) }
+        return search.stretched ? Self.stretchTall : 1
+    }
+
+    private var stretchW: CGFloat {
+        if search.arrived { return 1 - (search.breathing ? Self.breathRound : 0) }
+        return search.stretched ? Self.stretchNarrow : 1
+    }
+
+    private var squashW: CGFloat { stretchW }
+    private var squashH: CGFloat { stretchH }
 
     private var dropTopRadius: CGFloat { lerp(Self.listDrop / 2, Self.neckBead / 2, drip) * pop }
     private var dropBottomRadius: CGFloat { Self.listDrop / 2 * pop * squashH }
@@ -62,9 +80,6 @@ struct RootView: View {
         // Only the bulb flattens; the distance already fallen is not undone by the impact.
         return (fallen - Self.listDrop + Self.listDrop * squashH) * pop
     }
-
-    /// Where the bulb's underside meets the floor, measured from the top of the window.
-    private var impactY: CGFloat { dripOffset + dropHeight }
 
     /// The bar's outline once it is a bar; the whole pendant drop before that.
     private var fieldGlassShape: AnyShape {
@@ -169,7 +184,9 @@ struct RootView: View {
         // up in the notch and only the lower one descends. That is what leaves a neck
         // between them — and it costs no third glass shape, which is the one thing that
         // reliably pins the main thread inside NSHostingView's key-view walk.
-        return lerp(Self.notchTop, Self.restingTop, shape)
+        let settled = lerp(Self.notchTop, Self.restingTop, shape)
+        // Floating on an air current it cannot see.
+        return settled + (search.breathing && !search.shaped ? -Self.breathRise : 0)
     }
 
     private var fieldSize: CGSize {
@@ -247,23 +264,6 @@ struct RootView: View {
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onClose)
 
-            // The ring thrown off on impact. A plain stroked circle on purpose: every glass
-            // view added to the container is another shape in NSHostingView's key-view walk,
-            // and a third one pins the main thread on launch. scaleEffect is safe here
-            // precisely because this is not glass.
-            if search.impacting {
-                Circle()
-                    .stroke(Color.white.opacity(0.55), lineWidth: 2.5)
-                    .frame(width: Self.listDrop * 0.9, height: Self.listDrop * 0.9)
-                    .offset(y: impactY - Self.listDrop * 0.45)
-                    .allowsHitTesting(false)
-                    .transition(.asymmetric(insertion: .identity,
-                                            removal: .scale(scale: 3.2).combined(with: .opacity)))
-            }
-
-            // The spacing IS the merge distance, and it merges nearby glass whether or not
-            // a union id is set — so a wide one left in place refused the bar and the panel
-            // back into a single slab at rest. Wide only while they are coming apart.
             GlassEffectContainer(spacing: mergeDistance) {
                 VStack(spacing: gap) {
                     field
@@ -305,12 +305,16 @@ struct RootView: View {
             // cancel out: the drop is already a slab by the time the gap opens.
             // Low damping on the landing so the drop wobbles as it settles, the way a real
             // one does. tempo only stretches it for debugging; it is 1 by default.
-            // Gravity, not a spring. A falling drop accelerates all the way down and stops
-            // dead; a spring eases out and overshoots back, which is the opposite. The
-            // landing is sold by the squash below instead.
-            .animation(.timingCurve(0.45, 0, 0.95, 0.4, duration: 0.42 * Controller.tempo),
-                       value: search.dripped)
-            .animation(.easeOut(duration: 0.42 * Controller.tempo), value: search.impacting)
+            // It does not accelerate into a floor — it meets an invisible cushion and
+            // brakes, coming to rest in mid-air. A pronounced easeOut is that braking.
+            .animation(.easeOut(duration: 0.62 * Controller.tempo), value: search.dripped)
+            .animation(.easeOut(duration: 0.18 * Controller.tempo), value: search.stretched)
+            // Barely damped on purpose: this spring IS the wobble, and 0.3 rings for about
+            // a second before it settles.
+            .animation(.spring(response: 0.4 * Controller.tempo, dampingFraction: 0.3),
+                       value: search.arrived)
+            .animation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true),
+                       value: search.breathing)
             // easeOut and short: a bubble stretches for a moment and lets go. A spring
             // would bring it back, which is the one thing a burst never does.
             .animation(.easeOut(duration: 0.13 * Controller.tempo), value: search.popping)

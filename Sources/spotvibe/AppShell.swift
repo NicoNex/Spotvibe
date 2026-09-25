@@ -169,14 +169,17 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         after(0.02) { self.search.dripped = true }
         // 3. it divides: a small droplet above, a large one below, the bridge between them
         //    thinning until it snaps
-        // 2b. it lands: the bulb squashes flat and throws a ring
-        after(0.44) { self.search.impacting = true }
-        after(0.56) { self.search.impacting = false }
+        // 2b. drawn out by its own speed, then released as it brakes — that release,
+        //     against a spring damped at 0.3, is the wobble
+        after(0.06) { self.search.stretched = true }
+        after(0.52) { self.search.arrived = true; self.search.stretched = false }
         after(0.62) { self.search.separated = true }
+        // 2c. and it hangs there breathing rather than frozen
+        after(0.80) { self.search.breathing = true }
         // 4. each droplet stretches into what it was going to be — the bar and the panel
-        after(0.74) { self.search.shaped = true }
+        after(1.00) { self.search.shaped = true }
         // 5. and only then do the contents arrive
-        after(1.02) { self.search.contentVisible = true }
+        after(1.28) { self.search.contentVisible = true }
     }
 
     /// Stretches every beat of the entrance, for watching it back frame by frame.
