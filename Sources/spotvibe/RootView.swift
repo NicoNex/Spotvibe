@@ -41,6 +41,23 @@ struct RootView: View {
     private static let restingTop: CGFloat = 188
     /// How much the drop swells in the instant before it bursts.
     private static let popSwell: CGFloat = 1.26
+
+    // The hanging drop, while it is still a drop. One glass shape, authored by PendantDrop,
+    // rather than two shapes the union tries to bridge — see that file for why.
+    private var dropTopRadius: CGFloat { lerp(Self.listDrop / 2, Self.neckBead / 2, drip) * pop }
+    private var dropBottomRadius: CGFloat { Self.listDrop / 2 * pop }
+    /// From "as wide as the drop" (no neck at all, just one ball) down to nothing.
+    private var dropWaist: CGFloat { lerp(Self.listDrop / 2, 0, drip) * pop }
+    private var dropWidth: CGFloat { Self.listDrop * pop }
+    private var dropHeight: CGFloat { lerp(Self.listDrop, Self.fallGap + Self.listDrop, drip) * pop }
+
+    /// The bar's outline once it is a bar; the whole pendant drop before that.
+    private var fieldGlassShape: AnyShape {
+        guard !search.shaped else { return AnyShape(fieldShape) }
+        return AnyShape(PendantDrop(topRadius: dropTopRadius,
+                                    bottomRadius: dropBottomRadius,
+                                    waist: dropWaist))
+    }
     /// How far the lower droplet descends while the upper one is still held in the notch.
     /// This is the neck: the union's bridge spans it, thinning as the gap opens, and snaps
     /// once the gap passes the merge distance.
@@ -224,14 +241,15 @@ struct RootView: View {
                         // Animating a frame is layout, not a transform: it does not force
                         // the subtree offscreen the way scaleEffect would, so the glass
                         // keeps sampling the live backdrop all the way through the morph.
-                        .frame(width: fieldSize.width, height: fieldSize.height)
-                        .background(solidFallback, in: fieldShape)
-                        .glassEffect(glass, in: fieldShape)
+                        .frame(width: search.shaped ? fieldSize.width : dropWidth,
+                               height: search.shaped ? fieldSize.height : dropHeight)
+                        .background(solidFallback, in: fieldGlassShape)
+                        .glassEffect(glass, in: fieldGlassShape)
                         .glassEffectID("field", in: _ns.wrappedValue)
                         .glassEffectUnion(id: unionID, namespace: _ns.wrappedValue)
                         .glassEffectTransition(.matchedGeometry)
 
-                    if search.rowCount > 0, search.expanded {
+                    if search.rowCount > 0, search.expanded, search.shaped {
                         results
                             .frame(width: listSize.width, height: listSize.height)
                             .background(solidFallback, in: listShape)
