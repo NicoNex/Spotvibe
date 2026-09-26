@@ -7,7 +7,7 @@ DIST     := dist
 APPDIR   := $(DIST)/$(APP).app
 RELEASE  := .build/release/$(BIN)
 
-.PHONY: all build app dmg run test clean
+.PHONY: all build app dmg run test clean icon
 
 ## Default: just the terminal binary. `make app` builds the bundle, `make dmg` the image.
 all: build
@@ -27,12 +27,14 @@ app: build
 	# bundle is needed — but it does mean the strings exist only in the .app, which is why
 	# every key is its own English text.
 	cp -R Resources/*.lproj "$(APPDIR)/Contents/Resources/"
+	cp Resources/$(APP).icns "$(APPDIR)/Contents/Resources/"
 	# Generated here rather than kept as a file, so it can never drift from these variables.
 	/usr/libexec/PlistBuddy -c "Clear dict" \
 	  -c "Add :CFBundleName string $(APP)" \
 	  -c "Add :CFBundleDisplayName string $(APP)" \
 	  -c "Add :CFBundleIdentifier string $(BUNDLE_ID)" \
 	  -c "Add :CFBundleExecutable string $(APP)" \
+	  -c "Add :CFBundleIconFile string $(APP)" \
 	  -c "Add :CFBundleDevelopmentRegion string en" \
 	  -c "Add :CFBundlePackageType string APPL" \
 	  -c "Add :CFBundleShortVersionString string $(VERSION)" \
@@ -63,6 +65,12 @@ dmg: app
 run: app
 	pkill -x "$(APP)" || true
 	SPOTVIBE_DEMO="$(DEMO)" SPOTVIBE_TRACE=1 "$(APPDIR)/Contents/MacOS/$(APP)"
+
+## icon — redraw Resources/icon.svg and rebuild the .icns. NOT a dependency of `app`:
+## the .icns is committed, so building the bundle needs no librsvg. Run this only after
+## changing the artwork in Tools/icon.py.
+icon:
+	./Tools/make-icns.sh
 
 clean:
 	swift package clean

@@ -46,7 +46,7 @@ struct RootView: View {
     private static let fieldWidth = panelWidth - fieldHeight - gearGap
     /// The settings slab stands in for the field row AND the results, so it is as tall as
     /// both together. Fixed, because settings do not grow or shrink with a search.
-    private static let settingsHeight: CGFloat = 392
+    private static let settingsHeight: CGFloat = 306
 
     /// The entrance: the slabs spring from slightly under full size up to it, overshooting
     /// once on a lightly damped spring. Done with the FRAME, never with scaleEffect — a

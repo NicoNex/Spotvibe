@@ -95,70 +95,99 @@ struct SettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             title
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    section(loc("Appearance")) {
-                        row(loc("Glass thickness")) {
-                            Picker("", selection: thicknessBinding) {
-                                Text(loc("Thin")).tag(Preferences.Thickness.thin)
-                                Text(loc("Medium")).tag(Preferences.Thickness.medium)
-                                Text(loc("Thick")).tag(Preferences.Thickness.thick)
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            .frame(width: 260)
-                        }
-                    }
-                    separator
-                    section(loc("Shortcut")) {
-                        row(loc("Open SpotVibe")) { recorderButton }
-                    }
-                    separator
-                    section(loc("Search")) {
-                        row(loc("Look in")) {
-                            Picker("", selection: scopeBinding) {
-                                Text(loc("Home folder")).tag(Preferences.Scope.home)
-                                Text(loc("Whole Mac")).tag(Preferences.Scope.everywhere)
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            .frame(width: 260)
-                        }
-                        row(loc("Show recents")) {
-                            Toggle("", isOn: recentsBinding)
-                                .toggleStyle(.switch)
+            // Two columns, because the slab is 798 wide: one column of eight-word rows
+            // across that much glass is mostly empty space with a control stranded at the
+            // far right, and the eye has to travel the whole width to pair label to value.
+            HStack(alignment: .top, spacing: Self.columnGap) {
+                VStack(alignment: .leading, spacing: Self.groupGap) {
+                    group(loc("Appearance"), rows: [
+                        Self.Row(icon: "circle.lefthalf.filled", label: loc("Glass thickness")) {
+                            AnyView(
+                                Picker("", selection: thicknessBinding) {
+                                    Text(loc("Thin")).tag(Preferences.Thickness.thin)
+                                    Text(loc("Medium")).tag(Preferences.Thickness.medium)
+                                    Text(loc("Thick")).tag(Preferences.Thickness.thick)
+                                }
+                                .pickerStyle(.segmented)
                                 .labelsHidden()
-                        }
-                    }
-                    separator
-                    section(loc("Web")) {
-                        row(loc("Search engine")) {
-                            Picker("", selection: engineBinding) {
-                                ForEach(Preferences.Engine.allCases) { Text($0.label).tag($0) }
-                            }
-                            .labelsHidden()
-                            .frame(width: 200)
-                        }
-                    }
+                                .frame(width: 176)
+                            )
+                        },
+                    ])
+                    group(loc("Search"), rows: [
+                        Self.Row(icon: "folder", label: loc("Look in")) {
+                            AnyView(
+                                Picker("", selection: scopeBinding) {
+                                    Text(loc("Home folder")).tag(Preferences.Scope.home)
+                                    Text(loc("Whole Mac")).tag(Preferences.Scope.everywhere)
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+                                .frame(width: 176)
+                            )
+                        },
+                        Self.Row(icon: "clock.arrow.circlepath", label: loc("Show recents")) {
+                            AnyView(
+                                Toggle("", isOn: recentsBinding)
+                                    .toggleStyle(.switch)
+                                    .labelsHidden()
+                            )
+                        },
+                    ])
                 }
-                .padding(.bottom, 14)
+                VStack(alignment: .leading, spacing: Self.groupGap) {
+                    group(loc("Shortcut"), rows: [
+                        Self.Row(icon: "keyboard", label: loc("Open SpotVibe")) {
+                            AnyView(recorderButton)
+                        },
+                    ])
+                    group(loc("Web"), rows: [
+                        Self.Row(icon: "magnifyingglass", label: loc("Search engine")) {
+                            AnyView(
+                                Picker("", selection: engineBinding) {
+                                    ForEach(Preferences.Engine.allCases) { Text($0.label).tag($0) }
+                                }
+                                .labelsHidden()
+                                .frame(width: 150)
+                            )
+                        },
+                    ])
+                    Spacer(minLength: 0)
+                    hint
+                }
             }
-            .scrollIndicators(.never)
+            .padding(.horizontal, Self.margin)
+            Spacer(minLength: 0)
         }
         .onDisappear { recorder.stop() }
     }
 
+    private static let margin: CGFloat = 28
+    private static let columnGap: CGFloat = 22
+    private static let groupGap: CGFloat = 16
+
     private var title: some View {
-        HStack {
+        HStack(alignment: .firstTextBaseline) {
             Text(loc("Settings"))
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 22, weight: .semibold, design: .rounded))
             Spacer(minLength: 0)
             Button(role: .close) { onClose() }
                 .buttonStyle(.glass)
         }
-        .padding(.horizontal, 22)
-        .padding(.top, 18)
-        .padding(.bottom, 12)
+        .padding(.horizontal, Self.margin)
+        .padding(.top, 20)
+        .padding(.bottom, 18)
+    }
+
+    /// Fills the space the shorter column leaves rather than padding it out, and answers the
+    /// one question the recorder raises the moment anyone looks at it.
+    private var hint: some View {
+        Text(loc("Click, then press the keys you want. Esc cancels."))
+            .font(.system(size: 11))
+            .foregroundStyle(.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 4)
+            .padding(.bottom, 2)
     }
 
     /// Bindings rather than direct writes, so the haptic fires exactly when the value
@@ -187,7 +216,7 @@ struct SettingsView: View {
             Text(recorder.active ? loc("Press a shortcut…") : settings.hotKeyLabel)
                 .font(.system(size: 13, weight: .medium))
                 .monospacedDigit()
-                .frame(width: 170)
+                .frame(width: 150)
         }
         .buttonStyle(.glass)
         .help(loc("Click, then press the keys you want. Esc cancels."))
@@ -195,32 +224,51 @@ struct SettingsView: View {
 
     // MARK: Chrome
 
-    private var separator: some View {
-        Divider()
-            .opacity(0.6)
-            .padding(.horizontal, 22)
-            .padding(.vertical, 6)
+    private struct Row: Identifiable {
+        let icon: String
+        let label: String
+        let control: () -> AnyView
+        var id: String { icon + label }
     }
 
-    private func section(_ name: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    /// A caption over a card of rows, which is how every settings window on this Mac is
+    /// laid out — the grouping is the thing being read, and a hairline across the whole
+    /// panel does not group, it only divides.
+    private func group(_ name: String, rows: [Row]) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
             Text(name.uppercased())
                 .font(.system(size: 10, weight: .semibold))
-                .tracking(0.6)
+                .tracking(0.7)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 22)
-                .padding(.top, 8)
-            content()
+                .padding(.leading, 4)
+            // ponytail: a plain translucent fill, NOT a second glass layer. Glass cannot
+            // sample glass, and the slab under this one already is some.
+            VStack(spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                    if index > 0 { Divider().opacity(0.5).padding(.leading, 42) }
+                    self.row(row)
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.primary.opacity(0.055)))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(.primary.opacity(0.07), lineWidth: 0.5))
         }
     }
 
-    private func row(_ label: String, @ViewBuilder control: () -> some View) -> some View {
-        HStack {
-            Text(label).font(.system(size: 13))
-            Spacer(minLength: 16)
-            control()
+    private func row(_ row: Row) -> some View {
+        HStack(spacing: 10) {
+            // The symbol is what makes a row findable at a glance; the label is what makes
+            // it unambiguous. Fixed width so every label starts on the same line.
+            Image(systemName: row.icon)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            Text(row.label).font(.system(size: 13)).lineLimit(1).fixedSize()
+            Spacer(minLength: 12)
+            row.control()
         }
-        .padding(.horizontal, 22)
-        .frame(height: 38)
+        .padding(.horizontal, 12)
+        .frame(height: 46)
     }
 }
