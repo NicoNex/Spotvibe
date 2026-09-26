@@ -62,8 +62,18 @@ struct RootView: View {
     private var fieldShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: Self.fieldHeight * scale / 2, style: .continuous)
     }
+    /// The gear circle IS the settings panel, mid-morph: same element, same glass, a radius
+    /// and a frame that interpolate. Continuous rather than circular so the curve is the
+    /// same family at both ends and the corner can actually be animated between them.
     private var gearShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Self.fieldHeight * scale / 2, style: .circular)
+        RoundedRectangle(cornerRadius: search.showingSettings ? 40 : Self.fieldHeight * scale / 2,
+                         style: .continuous)
+    }
+    private var gearWidth: CGFloat {
+        search.showingSettings ? Self.panelWidth * scale : Self.fieldHeight * scale
+    }
+    private var gearHeight: CGFloat {
+        search.showingSettings ? Self.settingsHeight * scale : Self.fieldHeight * scale
     }
     /// 40, not 26. Lensing happens at the rim, and on a slab this size the rim is a
     /// hairline around a large frosted field — a wider curve puts more of the edge at an
@@ -123,24 +133,24 @@ struct RootView: View {
     /// container — though the real lesson was harder won: see the comment in `body` about
     /// never adding or removing a glass element while an animation is running.
     private func showSettings(_ open: Bool) {
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
+        withAnimation(.spring(response: 0.46, dampingFraction: 0.80)) {
             search.showingSettings = open
         }
     }
 
+    /// The results slab collapses to nothing while the settings are open rather than being
+    /// taken out of the tree: see the note in `body`.
     private var lowerHeight: CGFloat {
-        search.showingSettings ? Self.settingsHeight : resultsHeight
+        search.showingSettings ? 0 : resultsHeight
     }
 
-    @ViewBuilder
-    private var lowerContent: some View {
-        if search.showingSettings {
-            SettingsView(settings: settings) { showSettings(false) }
-                .transition(.opacity)
-        } else {
-            results.transition(.opacity)
-        }
-    }
+    /// The glass takes its time; the writing on it does not. Left on the morph's own spring
+    /// the two sets of text are both legible for a third of a second and read as one page
+    /// printed twice. Out fast, in after a beat, and they never share the slab.
+    private static let contentFade = AnyTransition.asymmetric(
+        insertion: .opacity.animation(.easeIn(duration: 0.16).delay(0.13)),
+        removal: .opacity.animation(.easeOut(duration: 0.10))
+    )
 
     /// A hairline just inside the rim. The glass draws its own edge, but over a busy or
     /// low-contrast backdrop that edge washes out and the slab loses its outline. `.primary`
@@ -163,26 +173,41 @@ struct RootView: View {
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onClose)
 
-            GlassEffectContainer(spacing: 0) {
+            // Spacing is the MERGE distance, not padding: two glass elements closer together
+            // than this stop being two shapes and flow into one, the way two drops touching
+            // do. At rest the field and the gear sit 12 apart and stay separate; opening the
+            // settings closes that gap to 0 while the radius goes up, so they fuse on the
+            // way and the panel arrives as a single slab.
+            GlassEffectContainer(spacing: search.showingSettings ? 32 : 8) {
                 VStack(spacing: Self.gap) {
-                    // The field row is NEVER unmounted, not even for settings. Adding or
-                    // removing a glass element with an animation running leaves whatever
-                    // comes back un-hit-testable — the gear returned looking fine and then
-                    // ignored every click. So the glass stays put and only what is drawn
-                    // inside it changes.
-                    HStack(spacing: Self.gearGap) {
+                    // NO glass element is ever added or removed here. One that goes away
+                    // mid-animation comes back looking right and un-hit-testable — the gear
+                    // did exactly that, and every click after the first one fell through.
+                    // So the morph is the gear's OWN frame and corner radius: the circle
+                    // grows into the settings panel while the field collapses into it, and
+                    // the results slab drops to zero height. Same three elements throughout.
+                    HStack(alignment: .top, spacing: search.showingSettings ? 0 : Self.gearGap) {
                         field
+                            // Opacity on the CONTENT, inside the glass — never on the
+                            // element, which would rasterise the glass layer.
+                            .opacity(search.showingSettings ? 0 : 1)
+                            // Out fast, for the same reason the results are: the placeholder
+                            // would otherwise still be legible across the settings title.
+                            .animation(.easeOut(duration: 0.10), value: search.showingSettings)
                             // Animating a frame is layout, not a transform: it does not
                             // force the subtree offscreen the way scaleEffect would, so
                             // the glass keeps sampling the live backdrop throughout.
-                            .frame(width: Self.fieldWidth * scale, height: Self.fieldHeight * scale)
+                            .frame(width: search.showingSettings ? 0 : Self.fieldWidth * scale,
+                                   height: Self.fieldHeight * scale)
+                            .clipShape(fieldShape) // the text does not spill while it narrows
                             .background(solidFallback, in: fieldShape)
                             .glassEffect(glass, in: fieldShape)
                             .overlay { rim(fieldShape) }
                             .glassEffectID("field", in: _ns.wrappedValue)
 
-                        gear
-                            .frame(width: Self.fieldHeight * scale, height: Self.fieldHeight * scale)
+                        gearSlab
+                            .frame(width: gearWidth, height: gearHeight)
+                            .clipShape(gearShape)
                             .background(solidFallback, in: gearShape)
                             .glassEffect(glass, in: gearShape)
                             .overlay { rim(gearShape) }
@@ -190,10 +215,12 @@ struct RootView: View {
                     }
 
                     if search.showingSettings || (search.rowCount > 0 && search.expanded) {
-                        // One slab, two contents. The height springs between the two and the
-                        // contents cross-fade — and because THEY are not glass, fading them
-                        // is free of every constraint the glass layer carries.
-                        lowerContent
+                        results
+                            // The slab drains on the morph's spring; the grid on it goes
+                            // out immediately, or it stays readable under the settings
+                            // panel that is growing over the same space.
+                            .opacity(search.showingSettings ? 0 : 1)
+                            .animation(.easeOut(duration: 0.10), value: search.showingSettings)
                             .frame(width: Self.panelWidth * scale, height: lowerHeight * scale)
                             // Clipped to the slab, and clipped BEFORE the glass: a
                             // selected cell scrolled past the rounded edge was drawing
@@ -231,6 +258,21 @@ struct RootView: View {
             // firing once per keystroke — the exact thrash this debounce exists to stop.
             do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
             search.run(search.text)
+        }
+    }
+
+    /// What is drawn inside that one glass element: the gear glyph, or the settings. These
+    /// are plain views, not glass, so swapping them carries none of the glass constraints.
+    @ViewBuilder
+    private var gearSlab: some View {
+        if search.showingSettings {
+            // Laid out at its FINAL size inside a frame that is still a circle, so the
+            // growth reveals a finished screen instead of reflowing one at every width.
+            SettingsView(settings: settings) { showSettings(false) }
+                .frame(width: Self.panelWidth, height: Self.settingsHeight)
+                .transition(Self.contentFade)
+        } else {
+            gear.transition(Self.contentFade)
         }
     }
 
