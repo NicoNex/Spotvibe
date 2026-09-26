@@ -179,7 +179,34 @@ struct RootView: View {
             // settings closes that gap to 0 while the radius goes up, so they fuse on the
             // way and the panel arrives as a single slab.
             GlassEffectContainer(spacing: search.showingSettings ? 32 : 8) {
-                VStack(spacing: Self.gap) {
+                // A ZStack and not a VStack, with the results pinned at a FIXED offset. In a
+                // stack the growing settings panel pushes whatever is under it down the
+                // screen, so the grid slid out of the bottom of the panel while it faded —
+                // which reads as the old screen falling out rather than as one thing
+                // becoming another. Nothing below moves now; the panel simply covers it.
+                ZStack(alignment: .top) {
+                    if search.showingSettings || (search.rowCount > 0 && search.expanded) {
+                        results
+                            // The slab drains on the morph's spring; the grid on it goes
+                            // out immediately, or it stays readable under the settings
+                            // panel that is growing over the same space.
+                            .opacity(search.showingSettings ? 0 : 1)
+                            .animation(.easeOut(duration: 0.10), value: search.showingSettings)
+                            .frame(width: Self.panelWidth * scale, height: lowerHeight * scale,
+                                   alignment: .top)
+                            // Clipped to the slab, and clipped BEFORE the glass: a
+                            // selected cell scrolled past the rounded edge was drawing
+                            // outside the panel. Applied after .glassEffect it would clip
+                            // the glass layer itself, which rasterises it offscreen and
+                            // costs the backdrop sampling.
+                            .clipShape(listShape)
+                            .background(solidFallback, in: listShape)
+                            .glassEffect(glass, in: listShape)
+                            .overlay { rim(listShape) }
+                            .glassEffectID("results", in: _ns.wrappedValue)
+                            .padding(.top, Self.fieldHeight * scale + Self.gap)
+                    }
+
                     // NO glass element is ever added or removed here. One that goes away
                     // mid-animation comes back looking right and un-hit-testable — the gear
                     // did exactly that, and every click after the first one fell through.
@@ -212,26 +239,6 @@ struct RootView: View {
                             .glassEffect(glass, in: gearShape)
                             .overlay { rim(gearShape) }
                             .glassEffectID("gear", in: _ns.wrappedValue)
-                    }
-
-                    if search.showingSettings || (search.rowCount > 0 && search.expanded) {
-                        results
-                            // The slab drains on the morph's spring; the grid on it goes
-                            // out immediately, or it stays readable under the settings
-                            // panel that is growing over the same space.
-                            .opacity(search.showingSettings ? 0 : 1)
-                            .animation(.easeOut(duration: 0.10), value: search.showingSettings)
-                            .frame(width: Self.panelWidth * scale, height: lowerHeight * scale)
-                            // Clipped to the slab, and clipped BEFORE the glass: a
-                            // selected cell scrolled past the rounded edge was drawing
-                            // outside the panel. Applied after .glassEffect it would clip
-                            // the glass layer itself, which rasterises it offscreen and
-                            // costs the backdrop sampling.
-                            .clipShape(listShape)
-                            .background(solidFallback, in: listShape)
-                            .glassEffect(glass, in: listShape)
-                            .overlay { rim(listShape) }
-                            .glassEffectID("results", in: _ns.wrappedValue)
                     }
                 }
                 .padding(.horizontal, Self.outerPadding)
@@ -401,17 +408,7 @@ struct RootView: View {
             }
             .scrollIndicators(.never)
             .scrollBounceBehavior(.basedOnSize)
-            .overlay {
-                if search.launching != nil {
-                    // The same matched highlight, now the size of the slab: it grows out of
-                    // the chosen cell and floods the panel as the app comes up.
-                    listShape.fill(accent)
-                        .matchedGeometryEffect(id: "selection", in: _ns.wrappedValue)
-                        .allowsHitTesting(false)
-                }
-            }
             .animation(.spring(response: 0.26, dampingFraction: 0.78), value: search.selection)
-            .animation(.spring(response: 0.34, dampingFraction: 0.82), value: search.launching)
             .onChange(of: search.selection) { _, new in
                 proxy.scrollTo(new)
             }
@@ -464,12 +461,18 @@ struct RootView: View {
             .frame(height: Self.headerHeight, alignment: .leading)
     }
 
+    private var launching: Bool { search.launching != nil }
+
+    /// Everything that was not chosen steps back while the app comes up, so the one that
+    /// was reads as picked rather than as merely still there.
+    private func dimmed(_ selected: Bool) -> Double {
+        launching && !selected ? 0.3 : 1
+    }
+
     /// One highlight rect shared through the namespace, so moving the selection slides it.
     @ViewBuilder
     private func highlight(_ selected: Bool, cornerRadius: CGFloat) -> some View {
-        // While launching, the single matched highlight belongs to the overlay instead,
-        // which is what makes it grow from this cell to fill the slab.
-        if selected, search.launching == nil {
+        if selected {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(accent)
                 .matchedGeometryEffect(id: "selection", in: _ns.wrappedValue)
@@ -501,8 +504,14 @@ struct RootView: View {
             icon(model.icon, size: 72, selected: selected)
                 // Scales one icon, well inside the slab. Scaling anything that *contains*
                 // the glass would rasterise it and cost the edge refraction.
-                .scaleEffect(selected ? 1.06 : 1)
+                //
+                // Launching is the same gesture, further: the chosen icon springs once
+                // while everything around it steps back. The previous version grew the
+                // highlight into a slab-sized rectangle of accent colour, which covered
+                // half the grid on its way out and read as a rendering fault.
+                .scaleEffect(selected ? (launching ? 1.24 : 1.06) : 1)
                 .animation(.spring(response: 0.28, dampingFraction: 0.62), value: selected)
+                .animation(.spring(response: 0.24, dampingFraction: 0.55), value: search.launching)
             Text(model.title)
                 .font(.system(size: 12, weight: selected ? .semibold : .regular))
                 .lineLimit(2).multilineTextAlignment(.center)
@@ -511,6 +520,8 @@ struct RootView: View {
         .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
         .frame(width: Self.cellWidth - 10, height: Self.cellHeight - Self.cellGap)
         .background { highlight(selected, cornerRadius: 14) }
+        .opacity(dimmed(selected))
+        .animation(.easeOut(duration: 0.16), value: search.launching)
         .contentShape(Rectangle())
         .id(model.id)
         .onTapGesture { search.selection = model.id; activate() }
@@ -531,6 +542,8 @@ struct RootView: View {
         .padding(.horizontal, 12)
         .frame(height: Self.rowHeight - 2)
         .background { highlight(selected, cornerRadius: 10) }
+        .opacity(dimmed(selected))
+        .animation(.easeOut(duration: 0.16), value: search.launching)
         .contentShape(Rectangle()) // hit-testing covers the row, not just the text
         .id(model.id)
         .onTapGesture { search.selection = model.id; activate() }
