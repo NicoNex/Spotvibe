@@ -1,3 +1,10 @@
+// SpotVibe — a Spotlight replacement for macOS 26.
+// Copyright (C) 2026 Nicolò Santamaria
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU General Public License version 3, as published by the Free
+// Software Foundation. It comes with ABSOLUTELY NO WARRANTY; see LICENSE.
+
 // A full-screen wallpaper, for screenshots only.
 //
 // The panel is glass: it shows whatever is behind it, which on a working Mac is mail,

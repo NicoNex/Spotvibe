@@ -6,6 +6,10 @@
 
 **A Spotlight replacement for macOS 26 that opens your apps, not the internet.**
 
+[![Platform: macOS 26+](https://img.shields.io/badge/platform-macOS%2026%2B-000000?logo=apple&logoColor=white)](#install)
+[![Swift 6](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)](https://swift.org)
+[![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+
 Press `⌥Space`. Your apps are already on screen, arranged like the Dock's Apps grid,
 with the ones you actually use first. Type three letters and the one you meant is
 selected. Press `Return`. Nothing was uploaded, nothing was suggested, nothing was
@@ -150,6 +154,15 @@ Raycast and input-source switchers commonly hold that one.
 **Why macOS 26 only?**
 Liquid Glass is the whole visual design, and those APIs are new in 26. There is no
 fallback path, by choice.
+
+## License
+
+[GNU General Public License v3](LICENSE). Use it, read it, change it, share it. If you
+distribute a changed version — source or binary — that version has to be free software
+too, under the same licence, with its source available. That is the whole deal.
+
+The `.app` carries the licence text in `Contents/Resources/LICENSE`, so a copy travels
+with every build.
 
 ## Contributing
 

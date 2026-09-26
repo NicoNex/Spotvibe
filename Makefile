@@ -32,6 +32,8 @@ app: build
 	# every key is its own English text.
 	cp -R Resources/*.lproj "$(APPDIR)/Contents/Resources/"
 	cp Resources/$(APP).icns "$(APPDIR)/Contents/Resources/"
+	# The GPL travels with the binary, not only with the repository.
+	cp LICENSE "$(APPDIR)/Contents/Resources/"
 	# Generated here rather than kept as a file, so it can never drift from these variables.
 	/usr/libexec/PlistBuddy -c "Clear dict" \
 	  -c "Add :CFBundleName string $(APP)" \
