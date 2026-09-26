@@ -39,6 +39,16 @@ private func installHotKey(code: UInt32, modifiers: UInt32, _ action: @escaping 
                                GetApplicationEventTarget(), 0, &hotKeyRef) == noErr
 }
 
+/// Hands the chord back to the system. A registered hotkey never reaches the app at all,
+/// so while the settings are listening for a new one this has to be let go of — otherwise
+/// pressing the current chord to keep it would toggle the panel shut instead of being
+/// recorded as the choice it is.
+private func releaseHotKey() {
+    guard let existing = hotKeyRef else { return }
+    UnregisterEventHotKey(existing)
+    hotKeyRef = nil
+}
+
 func trace(_ message: String) {
     guard let path = ProcessInfo.processInfo.environment["SPOTVIBE_TRACE"] else { return }
     let line = message + "\n"
@@ -95,6 +105,15 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // chord that is already taken is reported the moment it is chosen.
         preferences.onHotKeyChanged = { [weak self] in
             guard let self else { return }
+            // Binding is deferred while recording: taking the chord back mid-recording would
+            // mean the next key press never arrives. The end of the recording binds it.
+            let ok = preferences.recording ? true : bindHotKey()
+            status.menu?.items.first?.title = Self.hotKeyMenuTitle(ok: ok,
+                                                                  label: preferences.hotKeyLabel)
+        }
+        preferences.onRecordingChanged = { [weak self] recording in
+            guard let self else { return }
+            if recording { releaseHotKey(); return }
             status.menu?.items.first?.title = Self.hotKeyMenuTitle(ok: bindHotKey(),
                                                                   label: preferences.hotKeyLabel)
         }

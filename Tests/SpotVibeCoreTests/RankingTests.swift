@@ -314,3 +314,32 @@ struct NoiseTests {
         }
     }
 }
+
+@Suite("Hot-key recording")
+struct RecordingTests {
+    /// An isolated store, or the suite would read and rewrite the real preferences.
+    private func scratch() -> UserDefaults {
+        let name = "spotvibe.tests.\(UUID().uuidString)"
+        let store = UserDefaults(suiteName: name)!
+        store.removePersistentDomain(forName: name)
+        return store
+    }
+
+    @Test("recording is announced, so the controller can let go of the chord")
+    func announced() {
+        let settings = Preferences(store: scratch())
+        var seen: [Bool] = []
+        settings.onRecordingChanged = { seen.append($0) }
+
+        settings.recording = true
+        // The chord already bound, pressed again to confirm itself: it only ever reaches the
+        // recorder because the controller released it on the `true` above.
+        settings.setHotKey(code: settings.hotKeyCode,
+                           modifiers: settings.hotKeyModifiers,
+                           label: settings.hotKeyLabel)
+        settings.recording = false
+
+        #expect(seen == [true, false])
+        #expect(settings.hotKeyLabel == "⌥Space")
+    }
+}

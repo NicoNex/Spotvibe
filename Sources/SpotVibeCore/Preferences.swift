@@ -101,8 +101,15 @@ public final class Preferences {
         }
     }
 
+    /// True while the settings screen is waiting for a chord. The controller releases the
+    /// global hotkey for as long as it is: a registered hotkey is consumed by the system
+    /// before any app sees the keys, so pressing the CURRENT chord to confirm it would
+    /// reach the toggle and close the panel instead of being recorded.
+    public var recording = false { didSet { onRecordingChanged?(recording) } }
+
     public var onHotKeyChanged: (() -> Void)?
     public var onScopeChanged: (() -> Void)?
+    public var onRecordingChanged: ((Bool) -> Void)?
 
     /// Both halves land together, so the handler runs once with a consistent pair.
     public func setHotKey(code: UInt32, modifiers: UInt32, label: String) {

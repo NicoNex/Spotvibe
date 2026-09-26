@@ -15,11 +15,14 @@ final class HotKeyRecorder {
     @ObservationIgnored private var monitor: Any?
     @ObservationIgnored var onCapture: ((UInt32, UInt32, String) -> Void)?
 
+    @ObservationIgnored var onActiveChanged: ((Bool) -> Void)?
+
     func toggle() { active ? stop() : start() }
 
     func start() {
         guard monitor == nil else { return }
         active = true
+        onActiveChanged?(true)
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             if event.keyCode == UInt16(kVK_Escape) { stop(); return nil }
@@ -33,9 +36,11 @@ final class HotKeyRecorder {
     }
 
     func stop() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
+        guard monitor != nil else { return } // or the hotkey is re-bound on every redraw
+        NSEvent.removeMonitor(monitor!)
         monitor = nil
         active = false
+        onActiveChanged?(false)
     }
 
     deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
@@ -215,6 +220,9 @@ struct SettingsView: View {
                 settings.setHotKey(code: code, modifiers: modifiers, label: label)
                 haptic()
             }
+            // The controller watches this to let go of the global hotkey while we listen,
+            // so the chord that is already bound can be pressed to confirm itself.
+            recorder.onActiveChanged = { settings.recording = $0 }
             recorder.toggle()
         } label: {
             Text(recorder.active ? loc("Press a shortcut…") : settings.hotKeyLabel)
