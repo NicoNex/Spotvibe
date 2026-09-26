@@ -9,6 +9,25 @@
 "Search the web for “%@”" = "Cerca «%@» sul web";
 "Opens your default browser" = "Apre il browser predefinito";
 
-"Open SpotVibe  ⌥Space" = "Apri SpotVibe  ⌥Space";
-"Open SpotVibe  (⌥Space unavailable)" = "Apri SpotVibe  (⌥Space occupata)";
+"Open SpotVibe  %@" = "Apri SpotVibe  %@";
+"Open SpotVibe  (%@ unavailable)" = "Apri SpotVibe  (%@ occupata)";
 "Quit" = "Esci";
+
+/* Settings screen. */
+"Settings" = "Impostazioni";
+"Appearance" = "Aspetto";
+"Glass thickness" = "Spessore del vetro";
+"Thin" = "Sottile";
+"Medium" = "Medio";
+"Thick" = "Spesso";
+"Shortcut" = "Scorciatoia";
+"Open SpotVibe" = "Apri SpotVibe";
+"Press a shortcut…" = "Premi una scorciatoia…";
+"Click, then press the keys you want. Esc cancels." = "Clicca, poi premi i tasti che vuoi. Esc annulla.";
+"Search" = "Ricerca";
+"Look in" = "Cerca in";
+"Home folder" = "Cartella Inizio";
+"Whole Mac" = "Tutto il Mac";
+"Show recents" = "Mostra i recenti";
+"Web" = "Web";
+"Search engine" = "Motore di ricerca";

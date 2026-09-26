@@ -13,6 +13,25 @@
 
 /* Menu bar. The trailing text is the hotkey, shown inline because a status-item menu
    cannot display a key equivalent for a Carbon-registered global hotkey. */
-"Open SpotVibe  ⌥Space" = "Open SpotVibe  ⌥Space";
-"Open SpotVibe  (⌥Space unavailable)" = "Open SpotVibe  (⌥Space unavailable)";
+"Open SpotVibe  %@" = "Open SpotVibe  %@";
+"Open SpotVibe  (%@ unavailable)" = "Open SpotVibe  (%@ unavailable)";
 "Quit" = "Quit";
+
+/* Settings screen. */
+"Settings" = "Settings";
+"Appearance" = "Appearance";
+"Glass thickness" = "Glass thickness";
+"Thin" = "Thin";
+"Medium" = "Medium";
+"Thick" = "Thick";
+"Shortcut" = "Shortcut";
+"Open SpotVibe" = "Open SpotVibe";
+"Press a shortcut…" = "Press a shortcut…";
+"Click, then press the keys you want. Esc cancels." = "Click, then press the keys you want. Esc cancels.";
+"Search" = "Search";
+"Look in" = "Look in";
+"Home folder" = "Home folder";
+"Whole Mac" = "Whole Mac";
+"Show recents" = "Show recents";
+"Web" = "Web";
+"Search engine" = "Search engine";

@@ -40,6 +40,13 @@ struct RootView: View {
     private static let topInset: CGFloat = 188
     private static let gap: CGFloat = 26
     private static let fieldHeight: CGFloat = 56
+    /// The gear is a circle the same height as the field, on the same row, so the two read
+    /// as one control strip. The field gives up exactly that much width plus the gap.
+    private static let gearGap: CGFloat = 12
+    private static let fieldWidth = panelWidth - fieldHeight - gearGap
+    /// The settings slab stands in for the field row AND the results, so it is as tall as
+    /// both together. Fixed, because settings do not grow or shrink with a search.
+    private static let settingsHeight: CGFloat = 392
 
     /// The entrance: the slabs spring from slightly under full size up to it, overshooting
     /// once on a lightly damped spring. Done with the FRAME, never with scaleEffect — a
@@ -55,6 +62,9 @@ struct RootView: View {
     private var fieldShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: Self.fieldHeight * scale / 2, style: .continuous)
     }
+    private var gearShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: Self.fieldHeight * scale / 2, style: .circular)
+    }
     /// 40, not 26. Lensing happens at the rim, and on a slab this size the rim is a
     /// hairline around a large frosted field — a wider curve puts more of the edge at an
     /// angle where it actually bends what is behind it.
@@ -69,6 +79,8 @@ struct RootView: View {
         return Color(nsColor: .controlAccentColor)
     }
 
+    private var settings: Preferences { search.settings }
+
     /// The accent tints the glass, scaled by the system glass-tint slider. Reduce
     /// Transparency swaps the glass out for a solid window background.
     private var glass: Glass {
@@ -81,11 +93,30 @@ struct RootView: View {
         // interactive() stays: it is the single addition macOS 27 made to the material
         // (AppKit spells it NSGlassEffectView.effectIsInteractive) and gives the glass a
         // live specular response rather than a static sheen.
-        return .regular.tint(accent.opacity(0.16 * search.glassTint)).interactive()
+        let tint = accent.opacity(0.16 * search.glassTint)
+        // The system has no thickness knob — `.clear` and `.regular` are the whole family —
+        // so "thin" is the clear material and the other two are the regular one, separated
+        // by the scrim below. `.clear` does take a tint, despite what one might assume.
+        guard settings.thickness == .thin else { return .regular.tint(tint).interactive() }
+        return .clear.tint(tint).interactive()
+    }
+
+    /// Sits ON TOP of the material (the background modifier is applied before `.glassEffect`,
+    /// so the glass goes behind it). `.clear` on its own is too thin for a panel this dense
+    /// with small text — over a busy backdrop the labels collide with what is behind them —
+    /// so even the thin setting keeps a little, and the thick one leans on it.
+    private var scrim: CGFloat {
+        switch settings.thickness {
+        case .thin: 0.18
+        case .medium: 0
+        case .thick: 0.38
+        }
     }
 
     private var solidFallback: AnyShapeStyle {
-        search.reduceTransparency ? AnyShapeStyle(.windowBackground) : AnyShapeStyle(.clear)
+        if search.reduceTransparency { return AnyShapeStyle(.windowBackground) }
+        guard scrim > 0 else { return AnyShapeStyle(.clear) }
+        return AnyShapeStyle(Color(nsColor: .windowBackgroundColor).opacity(scrim))
     }
 
     /// A hairline just inside the rim. The glass draws its own edge, but over a busy or
@@ -111,29 +142,51 @@ struct RootView: View {
 
             GlassEffectContainer(spacing: 0) {
                 VStack(spacing: Self.gap) {
-                    field
-                        // Animating a frame is layout, not a transform: it does not force
-                        // the subtree offscreen the way scaleEffect would, so the glass
-                        // keeps sampling the live backdrop through the whole entrance.
-                        .frame(width: Self.panelWidth * scale, height: Self.fieldHeight * scale)
-                        .background(solidFallback, in: fieldShape)
-                        .glassEffect(glass, in: fieldShape)
-                        .overlay { rim(fieldShape) }
-                        .glassEffectID("field", in: _ns.wrappedValue)
-
-                    if search.rowCount > 0, search.expanded {
-                        results
-                            .frame(width: Self.panelWidth * scale, height: resultsHeight * scale)
-                            // Clipped to the slab, and clipped BEFORE the glass: a selected
-                            // cell scrolled past the rounded edge was drawing outside the
-                            // panel. Applied after .glassEffect it would clip the glass
-                            // layer itself, which rasterises it offscreen and costs the
-                            // backdrop sampling.
+                    if search.showingSettings {
+                        // One slab standing in for the field, the gear and the results at
+                        // once. It carries the GEAR's id, so the system grows it out of that
+                        // little circle instead of cross-fading a new shape in.
+                        SettingsView(settings: settings) { search.showingSettings = false }
+                            .frame(width: Self.panelWidth, height: Self.settingsHeight)
                             .clipShape(listShape)
                             .background(solidFallback, in: listShape)
                             .glassEffect(glass, in: listShape)
                             .overlay { rim(listShape) }
-                            .glassEffectID("results", in: _ns.wrappedValue)
+                            .glassEffectID("gear", in: _ns.wrappedValue)
+                    } else {
+                        HStack(spacing: Self.gearGap) {
+                            field
+                                // Animating a frame is layout, not a transform: it does not
+                                // force the subtree offscreen the way scaleEffect would, so
+                                // the glass keeps sampling the live backdrop throughout.
+                                .frame(width: Self.fieldWidth * scale, height: Self.fieldHeight * scale)
+                                .background(solidFallback, in: fieldShape)
+                                .glassEffect(glass, in: fieldShape)
+                                .overlay { rim(fieldShape) }
+                                .glassEffectID("field", in: _ns.wrappedValue)
+
+                            gear
+                                .frame(width: Self.fieldHeight * scale, height: Self.fieldHeight * scale)
+                                .background(solidFallback, in: gearShape)
+                                .glassEffect(glass, in: gearShape)
+                                .overlay { rim(gearShape) }
+                                .glassEffectID("gear", in: _ns.wrappedValue)
+                        }
+
+                        if search.rowCount > 0, search.expanded {
+                            results
+                                .frame(width: Self.panelWidth * scale, height: resultsHeight * scale)
+                                // Clipped to the slab, and clipped BEFORE the glass: a
+                                // selected cell scrolled past the rounded edge was drawing
+                                // outside the panel. Applied after .glassEffect it would clip
+                                // the glass layer itself, which rasterises it offscreen and
+                                // costs the backdrop sampling.
+                                .clipShape(listShape)
+                                .background(solidFallback, in: listShape)
+                                .glassEffect(glass, in: listShape)
+                                .overlay { rim(listShape) }
+                                .glassEffectID("results", in: _ns.wrappedValue)
+                        }
                     }
                 }
                 .padding(.horizontal, Self.outerPadding)
@@ -142,6 +195,9 @@ struct RootView: View {
             // Lightly damped, and the overshoot IS the elastic: the slabs run just past
             // full size and settle back.
             .animation(.spring(response: 0.34, dampingFraction: 0.62), value: search.opened)
+            // Springier and a touch slower than the entrance, because this one has a long
+            // way to travel — a circle the height of the field becomes the whole panel.
+            .animation(.spring(response: 0.44, dampingFraction: 0.78), value: search.showingSettings)
         }
         .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
         // Nothing here wraps the glass container in opacity, blur, scale or shadow. Every
@@ -151,13 +207,32 @@ struct RootView: View {
         .onAppear { focused = true }
         // The hosting view outlives every hide, so re-show has to re-assert focus itself.
         .onChange(of: search.focusToken) { _, _ in focused = true }
-        .onExitCommand(perform: onClose)
+        // Esc backs out of settings first, and only closes the panel from the search screen.
+        .onExitCommand {
+            if search.showingSettings { search.showingSettings = false } else { onClose() }
+        }
         .task(id: search.text) {
             // `try?` here would swallow the cancellation and run the search anyway,
             // firing once per keystroke — the exact thrash this debounce exists to stop.
             do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
             search.run(search.text)
         }
+    }
+
+    /// Deliberately not a `Button`: the panel dismisses on any click that lands outside the
+    /// glass, so this needs a hit area that covers the whole circle, not just the glyph.
+    private var gear: some View {
+        Image(systemName: "gearshape")
+            .font(.system(size: 18, weight: .medium))
+            .foregroundStyle(.secondary)
+            .rotationEffect(.degrees(search.showingSettings ? 90 : 0))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+                search.showingSettings = true
+            }
+            .help(loc("Settings"))
     }
 
     private var field: some View {
@@ -415,10 +490,9 @@ struct RootView: View {
     private func activate() {
         guard search.rowCount > 0 else { return }
         if search.webRowSelected {
-            let term = search.text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            // ponytail: the system exposes no API for the browser's chosen search engine,
-            // so the engine is hardcoded. NSWorkspace still routes it to the default browser.
-            if let url = URL(string: "https://duckduckgo.com/?q=\(term)") {
+            // The system exposes no API for the browser's own choice of engine, so it is a
+            // setting. NSWorkspace still routes the URL to whichever browser is default.
+            if let url = settings.engine.url(for: search.text) {
                 NSWorkspace.shared.open(url)
             }
         } else if let hit = search.selectedHit {

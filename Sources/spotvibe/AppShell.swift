@@ -16,18 +16,25 @@ final class Panel: NSPanel {
 
 private var hotKeyRef: EventHotKeyRef?
 private var onHotKey: (() -> Void)?
+private var handlerInstalled = false
 
+/// Installs the Carbon handler once, then binds the chord. Re-registering is just
+/// unregistering the old reference and taking a new one — the handler stays put.
 @discardableResult
-private func installHotKey(_ action: @escaping () -> Void) -> Bool {
+private func installHotKey(code: UInt32, modifiers: UInt32, _ action: @escaping () -> Void) -> Bool {
     onHotKey = action
-    var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-    guard InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
-        onHotKey?()
-        return noErr
-    }, 1, &spec, nil, nil) == noErr else { return false }
+    if !handlerInstalled {
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        guard InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
+            onHotKey?()
+            return noErr
+        }, 1, &spec, nil, nil) == noErr else { return false }
+        handlerInstalled = true
+    }
+    if let existing = hotKeyRef { UnregisterEventHotKey(existing); hotKeyRef = nil }
     // Fails with eventHotKeyExistsErr when Alfred, Raycast or an input-source switcher
-    // already owns ⌥Space. Report it, or the app looks simply broken.
-    return RegisterEventHotKey(UInt32(kVK_Space), UInt32(optionKey),
+    // already owns the chord. Report it, or the app looks simply broken.
+    return RegisterEventHotKey(code, modifiers,
                                EventHotKeyID(signature: 0x5356_4245, id: 1),
                                GetApplicationEventTarget(), 0, &hotKeyRef) == noErr
 }
@@ -49,7 +56,8 @@ func trace(_ message: String) {
 // MARK: - Controller
 
 final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    private let search = Search()
+    private let preferences = Preferences()
+    private lazy var search = Search(settings: preferences)
     private var panel: Panel!
     private var status: NSStatusItem!
     /// The top edge of the screen, notch included — the window is pinned to it.
@@ -82,22 +90,44 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         host.view.setValue(NSColor.clear, forKey: "backgroundColor")
         panel.contentViewController = host
 
-        let hotKeyOK = installHotKey { [weak self] in self?.toggle() }
-        status = makeStatusItem(hotKeyOK: hotKeyOK)
+        status = makeStatusItem(hotKeyOK: bindHotKey())
+        // Rebinding from the settings screen re-registers and re-labels the menu item, so a
+        // chord that is already taken is reported the moment it is chosen.
+        preferences.onHotKeyChanged = { [weak self] in
+            guard let self else { return }
+            status.menu?.items.first?.title = Self.hotKeyMenuTitle(ok: bindHotKey(),
+                                                                  label: preferences.hotKeyLabel)
+        }
+        preferences.onScopeChanged = { [weak self] in self?.search.rescope() }
 
         if let demo = ProcessInfo.processInfo.environment["SPOTVIBE_DEMO"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.show()
-                if demo != "1" { self?.search.text = demo }
+                // `SPOTVIBE_DEMO=settings` opens straight onto the settings screen; any
+                // other value is typed into the field.
+                if demo == "settings" { self?.search.showingSettings = true }
+                else if demo != "1" { self?.search.text = demo }
             }
         }
+    }
+
+    private func bindHotKey() -> Bool {
+        installHotKey(code: preferences.hotKeyCode,
+                      modifiers: preferences.hotKeyModifiers) { [weak self] in self?.toggle() }
+    }
+
+    /// The chord is shown inline because a status-item menu cannot display a key equivalent
+    /// for a Carbon-registered global hotkey.
+    private static func hotKeyMenuTitle(ok: Bool, label: String) -> String {
+        ok ? String(format: loc("Open SpotVibe  %@"), label)
+           : String(format: loc("Open SpotVibe  (%@ unavailable)"), label)
     }
 
     private func makeStatusItem(hotKeyOK: Bool) -> NSStatusItem {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "sparkle.magnifyingglass", accessibilityDescription: "SpotVibe")
         let menu = NSMenu()
-        menu.addItem(withTitle: hotKeyOK ? loc("Open SpotVibe  ⌥Space") : loc("Open SpotVibe  (⌥Space unavailable)"),
+        menu.addItem(withTitle: Self.hotKeyMenuTitle(ok: hotKeyOK, label: preferences.hotKeyLabel),
                      action: #selector(showFromMenu), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: loc("Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")

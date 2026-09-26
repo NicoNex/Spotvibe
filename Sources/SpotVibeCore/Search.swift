@@ -56,6 +56,9 @@ public final class Search {
     /// Set one runloop turn after the panel is ordered in, so the slabs spring from
     /// slightly under their final size to it. The fade itself is the window's alpha.
     public var opened = false
+    /// The whole panel becomes the settings screen, which is why this lives here rather
+    /// than in the view: hiding the panel has to clear it.
+    public var showingSettings = false
     /// The path being launched. Set for the length of the launch animation only.
     public var launching: String?
     /// Bumped when the system accent changes. NSColor.controlAccentColor is dynamic, but
@@ -69,15 +72,19 @@ public final class Search {
     private var startedAt = Date()
     private var lastTerm = ""
 
+    public let settings: Preferences
+
     public init(frecency: Frecency = Frecency(),
          apps: [Hit] = Search.installedApps(),
-         warm: Bool = true) {
+         warm: Bool = true,
+         settings: Preferences = Preferences()) {
         self.frecency = frecency
         self.apps = apps
-        // ponytail: home only. The whole-disk scope dragged in caches, SDKs and system
-        // bundles, which cost time and were never what anyone wanted opened. Widen it
-        // only if searching outside the home directory turns out to matter.
-        query.searchScopes = [NSMetadataQueryUserHomeScope]
+        self.settings = settings
+        // Home by default: the whole-disk scope drags in caches, SDKs and system bundles,
+        // which cost time and are never what anyone meant to open by name. Settings can
+        // widen it, and `run` re-reads it on every search.
+        query.searchScopes = [settings.scope.metadataScope]
         // No sortDescriptors on purpose. Asking Spotlight to sort forces it to fetch the
         // sort attribute for every match — measured at ~650 ms for a broad term against
         // ~140 ms unsorted. Ranking happens locally instead, over the few rows shown.
@@ -136,7 +143,9 @@ public final class Search {
             // its name like everything else.
             let byPath = Dictionary(apps.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             // Only apps still installed: the store keeps a path long after the app is gone.
-            let recent = frecency.habitual(limit: Self.recentLimit).compactMap { byPath[$0] }
+            let recent = settings.showRecents
+                ? frecency.habitual(limit: Self.recentLimit).compactMap { byPath[$0] }
+                : []
             // One partition rather than two filters with inverted predicates, which would
             // have to be kept in step by eye. Shelved apps fall out of both, or the same
             // app would appear twice.
@@ -193,7 +202,17 @@ public final class Search {
         // LIKE, not ==: %@ substitution makes the term a literal, and only LIKE gives the
         // surrounding '*' its wildcard meaning. With == they match asterisks, so nothing hits.
         query.predicate = NSPredicate(format: "kMDItemDisplayName LIKE[cd] %@", "*\(term)*")
+        query.searchScopes = [settings.scope.metadataScope]
         query.start()
+    }
+
+    /// The scope changed under a live query. Whatever it had gathered is for the old scope,
+    /// so it is thrown away and the same term is asked again.
+    public func rescope() {
+        guard !text.isEmpty else { return }
+        fileHits = []
+        lastTerm = ""
+        run(text)
     }
 
     /// Ranking within a pool, most significant first: what this term has opened before,
@@ -236,6 +255,7 @@ public final class Search {
         text = ""
         launching = nil
         opened = false
+        showingSettings = false
         expanded = false
         rebuild()
     }
