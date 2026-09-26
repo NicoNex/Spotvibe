@@ -11,7 +11,7 @@ APPDIR   := $(DIST)/$(APP).app
 CONFIG   ?= release
 BUILT     = .build/$(CONFIG)/$(BIN)
 
-.PHONY: all build app dmg run test clean icon
+.PHONY: all build app dmg run test clean icon screenshots
 
 ## Default: just the terminal binary. `make app` builds the bundle, `make dmg` the image.
 all: build
@@ -76,6 +76,11 @@ run: app
 ## changing the artwork in Tools/icon.py.
 icon:
 	./Tools/make-icns.sh
+
+## screenshots — rebuild docs/screenshots/*.png from the running app, over a neutral
+## backdrop so nothing from the desktop ends up in the README.
+screenshots:
+	./Tools/screenshots.sh
 
 clean:
 	swift package clean

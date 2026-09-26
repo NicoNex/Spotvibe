@@ -15,7 +15,10 @@ public final class Search {
     // is not initialised when a test bundle loads that module, and reads as null memory.
     public static let noisyPathFragments = [
         "/node_modules/", "/.git/", "/go/pkg/mod/", "/.build/", "/.venv/", "/site-packages/",
-        "/.cargo/registry/",
+        "/.cargo/registry/", "/__pycache__/",
+        // Any interpreter's own standard library, wherever it was installed from: idlelib,
+        // encodings, the lot. Typing three letters otherwise fills the list with modules.
+        "/lib/python3",
         "/Library/", // app support, caches, containers — Spotlight hides all of it too
     ]
 

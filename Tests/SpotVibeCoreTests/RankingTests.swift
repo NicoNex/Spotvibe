@@ -298,6 +298,8 @@ struct NoiseTests {
             "/Users/me/go/pkg/mod/cache/x",
             "/Users/me/project/.build/debug/thing",
             "/Users/me/.venv/lib/site-packages/x.py",
+            "/Users/me/env/lib/python3.13/idlelib/calltip.py",
+            "/Users/me/env/lib/python3.13/__pycache__/calendar.cpython-313.pyc",
         ] {
             #expect(isNoisy(path), "\(path) should be filtered out")
         }
