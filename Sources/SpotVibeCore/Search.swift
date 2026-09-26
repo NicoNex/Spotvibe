@@ -23,8 +23,16 @@ public final class Search {
     /// Precomputed, because a view body can run many times per frame and filtering
     /// several hundred apps there is pure waste.
     public private(set) var hits: [Hit] = []
-    /// How many leading entries of `hits` are apps. They render as a grid, the rest as a list.
+    /// How many leading entries of `hits` are drawn as grid cells. NOT "how many are apps":
+    /// while browsing, the utilities after this mark are apps too, they just render as rows.
     public private(set) var appCount = 0
+    /// How many of those leading app entries are the recently-used shelf, drawn as the first
+    /// row with a separator under it. Zero once a term is typed: the ranking already folds
+    /// frecency in, so a separate shelf would only repeat what is at the top of the grid.
+    public private(set) var recentCount = 0
+    /// One grid row's worth, and the single definition of how wide that row is — the view
+    /// takes its column count from here, so the shelf can never end up a ragged block.
+    public static let recentLimit = 7
     private var fileHits: [Hit] = []
     public var selection = 0
     /// Visible state drives the present/dismiss animation; the panel itself is ordered
@@ -34,6 +42,9 @@ public final class Search {
     public var focusToken = 0
     /// Mirrors System Settings > Accessibility > Display > Reduce transparency.
     public var reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+    /// Mirrors System Settings > Accessibility > Display > Reduce motion. The fade stays —
+    /// a cross-fade is what that setting asks to be given instead — but the elastic does not.
+    public var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     /// System Settings > Appearance > glass tint slider, 0...1. Scales how much accent
     /// colour the glass takes, so the panel follows the same slider the rest of the OS does.
     public var glassTint = Search.systemGlassTint()
@@ -42,37 +53,9 @@ public final class Search {
     /// hundred app cells sitting in it at launch pin the main thread before the panel can
     /// ever be shown.
     public var expanded = false
-    /// Drives the gap between the field and the results. False overlaps them into a single
-    /// droplet; true is the resting gap. Everything liquid comes out of animating this: the
-    /// union bridge the system draws between two glass shapes thins as they pull apart, and
-    /// snaps when the gap passes the container's merge distance.
-    public var separated = false
-    /// Width of this display's notch, 0 when it has none. The drop is born the width of
-    /// the notch, so it reads as having come out of it.
-    public var notchWidth: CGFloat = 0
-    /// True from the snap until the drop has braked: air resistance draws it out into a
-    /// teardrop while it is moving fast.
-    public var stretched = false
-    /// Set when it comes to rest in mid-air. Releasing the stretch against a barely damped
-    /// spring is the wobble — the mass above falls onto the mass below and rings out.
-    public var arrived = false
-    /// A stationary drop that is perfectly still reads as a frozen bug, so it breathes.
-    public var breathing = false
-    /// The exit: once the two have flowed back into one drop, it swells for an instant and
-    /// bursts. A bubble does not fade — it is there and then it is not — so this drives a
-    /// quick swell and the window's alpha is cut rather than faded.
-    public var popping = false
-    /// First phase of the entrance: the drop hangs from the notch, stretched by its own
-    /// weight, then falls and rounds out where the panel will be.
-    public var dripped = false
-    /// Second phase of the entrance: the two droplets stretch into the search bar and the
-    /// panel. Kept apart from `separated` so the split reads first and the shapes after —
-    /// driven together, the drops are already slabs by the time the gap opens.
-    public var shaped = false
-    /// The results' contents fade in once the two bodies have finished separating.
-    /// Animating the glass shapes while they are full of icons and text reads as busy;
-    /// empty slabs separating, then content arriving, reads as liquid.
-    public var contentVisible = false
+    /// Set one runloop turn after the panel is ordered in, so the slabs spring from
+    /// slightly under their final size to it. The fade itself is the window's alpha.
+    public var opened = false
     /// The path being launched. Set for the length of the launch animation only.
     public var launching: String?
     /// Bumped when the system accent changes. NSColor.controlAccentColor is dynamic, but
@@ -105,8 +88,9 @@ public final class Search {
                 forName: name, object: query, queue: .main
             ) { [weak self] _ in self?.collect() }
         }
-        hits = apps
-        appCount = apps.count
+        // Through rebuild, not by assigning hits directly: the browse list is not simply
+        // `apps` — utilities are split out of the grid and moved to the end.
+        rebuild()
         // Opening the metadata-server connection costs ~30 ms once. Paying it at launch
         // keeps it off the first keystroke.
         guard warm else { return }
@@ -124,6 +108,7 @@ public final class Search {
             object: nil, queue: .main
         ) { [weak self] _ in
             self?.reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+            self?.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         }
         NotificationCenter.default.addObserver(
             forName: NSColor.systemColorsDidChangeNotification, object: nil, queue: .main
@@ -145,11 +130,28 @@ public final class Search {
     private func rebuild(preserving keepID: String? = nil) {
         if text.isEmpty {
             // The browse grid stays alphabetical: a grid that reshuffles itself is a grid
-            // you can no longer point at from memory.
-            hits = apps
-            appCount = apps.count
+            // you can no longer point at from memory. Utilities are dropped out of it and
+            // listed after, the way Spotlight keeps them out of the way of what you use.
+            // Only here: once a term is typed, a utility is just another app and ranks on
+            // its name like everything else.
+            let byPath = Dictionary(apps.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            // Only apps still installed: the store keeps a path long after the app is gone.
+            let recent = frecency.habitual(limit: Self.recentLimit).compactMap { byPath[$0] }
+            // One partition rather than two filters with inverted predicates, which would
+            // have to be kept in step by eye. Shelved apps fall out of both, or the same
+            // app would appear twice.
+            let shelved = Set(recent.map(\.id))
+            var grid: [Hit] = []
+            var utilities: [Hit] = []
+            for app in apps where !shelved.contains(app.id) {
+                if app.isUtility { utilities.append(app) } else { grid.append(app) }
+            }
+            recentCount = recent.count
+            appCount = recent.count + grid.count
+            hits = recent + grid + utilities
         } else {
-            let matching = apps.filter { $0.name.localizedCaseInsensitiveContains(text) }
+            recentCount = 0
+            let matching = apps.filter { $0.matches(text) }
             let taken = Set(matching.map(\.id))
             let now = Date()
             let term = text.lowercased()
@@ -166,8 +168,6 @@ public final class Search {
         selection = keepID.flatMap { id in hits.firstIndex { $0.id == id } } ?? 0
     }
 
-    /// Grid while browsing every app, list the moment a term narrows things down.
-    public var grid: Bool { text.isEmpty }
     public var showsWebRow: Bool { !text.isEmpty }
     public var rowCount: Int { hits.count + (showsWebRow ? 1 : 0) }
     public var webRowSelected: Bool { showsWebRow && selection == hits.count }
@@ -180,7 +180,7 @@ public final class Search {
         // Any other edit invalidates them, and they go — leaving them would let a fast
         // Return open whatever the *previous* term found.
         if term.hasPrefix(lastTerm), !lastTerm.isEmpty {
-            fileHits = fileHits.filter { $0.name.localizedCaseInsensitiveContains(term) }
+            fileHits = fileHits.filter { $0.matches(term) }
         } else {
             fileHits = []
         }
@@ -204,9 +204,18 @@ public final class Search {
         let name = hit.name.lowercased()
         if name == term { score += 50 }
         else if name.hasPrefix(term) { score += 25 }
+        // Worth less than a prefix match on purpose: how well the name fits what was typed
+        // decides the order, and recency only sorts out the ties underneath it. Same decay
+        // as the frecency store, on a shorter half-life — a file touched this week should
+        // clearly beat one from last year.
+        if let used = hit.used {
+            score += 20 * Frecency.decay(since: used, now: now, halfLife: Self.usedHalfLife)
+        }
         score += 10 / Double(1 + hit.name.count) // ties break towards the shorter name
         return score
     }
+
+    private static let usedHalfLife: TimeInterval = 14 * 24 * 3600
 
     /// Called when something is actually opened — the only signal worth learning from.
     public func record(_ hit: Hit) {
@@ -226,14 +235,7 @@ public final class Search {
         lastTerm = ""
         text = ""
         launching = nil
-        dripped = false
-        popping = false
-        stretched = false
-        arrived = false
-        breathing = false
-        separated = false
-        shaped = false
-        contentVisible = false
+        opened = false
         expanded = false
         rebuild()
     }
@@ -255,7 +257,12 @@ public final class Search {
                   let name = item.value(forAttribute: kMDItemDisplayName as String) as? String,
                   seen.insert(path).inserted
             else { continue }
-            out.append(Hit(id: path, name: name))
+            // Read only for the rows actually kept. This is the attribute a sortDescriptor
+            // would have made Spotlight fetch for EVERY match, which is what cost ~650 ms;
+            // asking for it 150 times here does not.
+            let used = item.value(forAttribute: kMDItemLastUsedDate as String) as? Date
+                ?? item.value(forAttribute: kMDItemContentModificationDate as String) as? Date
+            out.append(Hit(id: path, name: name, used: used))
         }
         fileHits = out
         // A live update must not yank the highlight out from under the arrow keys.
@@ -287,7 +294,13 @@ public final class Search {
             for case let url as URL in walker where url.pathExtension == "app" {
                 walker.skipDescendants()
                 guard seen.insert(url.path).inserted else { continue }
-                out.append(Hit(id: url.path, name: url.deletingPathExtension().lastPathComponent))
+                // The name the Finder shows, which is the app's own localisation for the
+                // system language when it ships one — "Calendario", not "Calendar". Falls
+                // back to the file name for apps that are not localised.
+                let shown = (try? url.resourceValues(forKeys: [.localizedNameKey]))?.localizedName
+                let name = (shown as NSString?)?.deletingPathExtension
+                    ?? url.deletingPathExtension().lastPathComponent
+                out.append(Hit(id: url.path, name: name))
             }
         }
         return out.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }

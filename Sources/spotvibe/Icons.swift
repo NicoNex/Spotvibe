@@ -1,5 +1,10 @@
 import AppKit
 
+/// Looked up in the .app bundle's `.lproj` folders. The key IS the English text, so a
+/// binary run outside the bundle — `swift run`, a test host — still shows English rather
+/// than a raw key.
+func loc(_ key: String) -> String { NSLocalizedString(key, comment: "") }
+
 /// ponytail: unbounded process-lifetime cache. A few hundred 32 KB icons is nothing,
 /// and NSWorkspace.icon(forFile:) hits the disk — far too slow to call from a view body.
 enum Icons {

@@ -1,0 +1,14 @@
+/* Italian. Keys are the English source text; see en.lproj for the comments. */
+
+"Search apps and files" = "Cerca app e file";
+"Recent" = "Recenti";
+"Applications" = "Applicazioni";
+"Other" = "Altro";
+
+/* %@ è il termine digitato. */
+"Search the web for “%@”" = "Cerca «%@» sul web";
+"Opens your default browser" = "Apre il browser predefinito";
+
+"Open SpotVibe  ⌥Space" = "Apri SpotVibe  ⌥Space";
+"Open SpotVibe  (⌥Space unavailable)" = "Apri SpotVibe  (⌥Space occupata)";
+"Quit" = "Esci";

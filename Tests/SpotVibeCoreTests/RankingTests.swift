@@ -7,6 +7,10 @@ import Testing
 
 private func app(_ name: String) -> Hit { Hit(id: "/Applications/\(name).app", name: name) }
 
+private func utility(_ name: String) -> Hit {
+    Hit(id: "/System/Applications/Utilities/\(name).app", name: name)
+}
+
 private func scratchURL() -> URL {
     URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("spotvibe-test-\(UUID().uuidString).json")
@@ -169,6 +173,42 @@ struct SearchTests {
         #expect(search.appCount == apps.count)
         #expect(!search.showsWebRow)
         #expect(search.rowCount == apps.count)
+    }
+
+    @Test("the browse screen opens with a shelf of what gets used, most-used first")
+    func recentShelf() {
+        let url = scratchURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let frecency = Frecency(url: url)
+        // Safari twice, Calc once: frequency breaks the tie between two same-day opens.
+        frecency.record(query: "saf", path: "/Applications/Safari.app")
+        frecency.record(query: "", path: "/Applications/Safari.app")
+        frecency.record(query: "cal", path: "/Applications/Calc.app")
+
+        let search = makeSearch(apps: apps, frecency: frecency)
+        #expect(search.recentCount == 2)
+        #expect(search.hits.prefix(2).map(\.name) == ["Safari", "Calc"])
+        // Shelved apps leave the grid below, so neither appears twice.
+        #expect(search.hits.count == apps.count)
+        #expect(search.appCount == apps.count)
+
+        // Typing retires the shelf: ranking already folds frecency in.
+        search.text = "cal"
+        #expect(search.recentCount == 0)
+    }
+
+    @Test("utilities leave the browse grid, but rank as plain apps once a term is typed")
+    func utilitiesOnlySplitWhileBrowsing() {
+        let mixed = [utility("Console"), app("Calendar"), utility("Calculator")]
+        let search = makeSearch(apps: mixed, frecency: Frecency(url: scratchURL()))
+        #expect(search.appCount == 1) // Calendar alone
+        #expect(search.hits.map(\.name) == ["Calendar", "Console", "Calculator"])
+
+        // Typing drops the distinction: an exact match wins the top spot even though it
+        // is a utility, and both land inside the grid.
+        search.text = "calculator"
+        #expect(search.appCount == 1)
+        #expect(search.hits.first?.name == "Calculator")
     }
 
     @Test("a term keeps only the apps that contain it")

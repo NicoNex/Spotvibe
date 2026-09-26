@@ -38,8 +38,14 @@ public final class Frecency {
 
     private static func key(_ query: String, _ path: String) -> String { query + "\n" + path }
 
+    /// How much of a score survives from `at` to `now`: half of it per half-life. Shared so
+    /// the file-recency term in `Search.rank` decays on the same curve as the store itself.
+    public static func decay(since at: Date, now: Date, halfLife: TimeInterval) -> Double {
+        pow(0.5, now.timeIntervalSince(at) / halfLife)
+    }
+
     private func decayed(_ entry: Entry, now: Date) -> Double {
-        entry.score * pow(0.5, now.timeIntervalSince(entry.at) / Self.halfLife)
+        entry.score * Self.decay(since: entry.at, now: now, halfLife: Self.halfLife)
     }
 
     /// What was learned for this exact term far outweighs a general habit, so a typed
@@ -48,6 +54,18 @@ public final class Frecency {
         let typed = entries[Self.key(query.lowercased(), path)].map { decayed($0, now: now) } ?? 0
         let overall = entries[Self.key("", path)].map { decayed($0, now: now) } ?? 0
         return typed * 4 + overall
+    }
+
+    /// The most-used paths by the global habit alone, best first. The query-keyed entries
+    /// are deliberately left out: this answers "what does this person open", not "what does
+    /// this term mean", and folding the two together would let one heavily-typed term
+    /// dominate a list that is supposed to be about the app.
+    public func habitual(limit: Int, now: Date = Date()) -> [String] {
+        var scored: [(path: String, score: Double)] = []
+        for (key, entry) in entries where key.hasPrefix("\n") { // the empty-query key
+            scored.append((String(key.dropFirst()), decayed(entry, now: now)))
+        }
+        return scored.sorted { $0.score > $1.score }.prefix(limit).map(\.path)
     }
 
     public func record(query: String, path: String, now: Date = Date()) {

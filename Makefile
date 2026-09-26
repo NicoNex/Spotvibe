@@ -23,12 +23,17 @@ app: build
 	mkdir -p "$(APPDIR)/Contents/MacOS" "$(APPDIR)/Contents/Resources"
 	cp "$(RELEASE)" "$(APPDIR)/Contents/MacOS/$(APP)"
 	printf '%s' 'APPL????' > "$(APPDIR)/Contents/PkgInfo"
+	# Localisations. Plain .lproj folders read through Bundle.main, so no SwiftPM resource
+	# bundle is needed — but it does mean the strings exist only in the .app, which is why
+	# every key is its own English text.
+	cp -R Resources/*.lproj "$(APPDIR)/Contents/Resources/"
 	# Generated here rather than kept as a file, so it can never drift from these variables.
 	/usr/libexec/PlistBuddy -c "Clear dict" \
 	  -c "Add :CFBundleName string $(APP)" \
 	  -c "Add :CFBundleDisplayName string $(APP)" \
 	  -c "Add :CFBundleIdentifier string $(BUNDLE_ID)" \
 	  -c "Add :CFBundleExecutable string $(APP)" \
+	  -c "Add :CFBundleDevelopmentRegion string en" \
 	  -c "Add :CFBundlePackageType string APPL" \
 	  -c "Add :CFBundleShortVersionString string $(VERSION)" \
 	  -c "Add :CFBundleVersion string $(VERSION)" \
@@ -52,10 +57,12 @@ dmg: app
 	rm -rf "$(DIST)/stage"
 	@echo "built $(DIST)/$(APP)-$(VERSION).dmg"
 
-## run — build the bundle and launch it
+## run — build and launch in the FOREGROUND, so trace output lands in this terminal and
+## ctrl-C stops it. The panel opens by itself; `make run DEMO=cal` opens it with a term
+## already typed. Use `make app && open dist/SpotVibe.app` to leave one running detached.
 run: app
 	pkill -x "$(APP)" || true
-	open "$(APPDIR)"
+	SPOTVIBE_DEMO="$(DEMO)" SPOTVIBE_TRACE=1 "$(APPDIR)/Contents/MacOS/$(APP)"
 
 clean:
 	swift package clean

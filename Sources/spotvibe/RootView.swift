@@ -23,203 +23,44 @@ struct RootView: View {
         Binding(get: { search.text }, set: { search.text = $0 })
     }
 
-    private static let columns = 7
+    /// Derived, not a second 7: the recents shelf is exactly one row of this grid, and two
+    /// constants that must match would only drift apart.
+    private static let columns = Search.recentLimit
     private static let cellWidth: CGFloat = 114
     private static let cellHeight: CGFloat = 132
     private static let cellGap: CGFloat = 8
     private static let rowHeight: CGFloat = 48
     private static let panelWidth = cellWidth * CGFloat(columns)
     private static let outerPadding: CGFloat = 34
-    /// The window is a FIXED size and the content moves inside it. A window resize is a
-    /// single AppKit step that cannot agree with a SwiftUI interpolation, so animating the
-    /// gap in a self-sizing window would jolt the panel on every frame of the separation.
-    /// Tall enough to reach from the top edge of the screen — the notch — down past the
-    /// panel's resting place, because the drop falls that whole way inside this window.
+    /// The window is a FIXED size and the content is laid out inside it. A window resize is
+    /// a single AppKit step that cannot agree with a SwiftUI interpolation, so a self-sizing
+    /// window would jolt the panel on every frame of the entrance spring.
     static let panelSize = CGSize(width: panelWidth + outerPadding * 2, height: 850)
-    /// Where the panel comes to rest, measured from the top of the screen. Chosen so the
-    /// drop lands around the middle of the display rather than up under the notch.
-    private static let restingTop: CGFloat = 188
-    /// How much the drop swells in the instant before it bursts.
-    private static let popSwell: CGFloat = 1.26
-    /// Drawn out by its own speed just after the snap, and volume-preserving: what it
-    /// gains in height it gives up in width. Done with the frame and the shape's own radii,
-    /// never with scaleEffect — a transform forces the subtree offscreen and the glass
-    /// stops sampling the live backdrop, which is the whole effect.
-    private static let stretchTall: CGFloat = 1.30
-    private static let stretchNarrow: CGFloat = 0.82
-    /// How far it drifts while it hangs there, and how much its sphericity wanders.
-    private static let breathRise: CGFloat = 5
-    private static let breathRound: CGFloat = 0.02
+    /// Where the panel sits, measured from the top of the screen.
+    private static let topInset: CGFloat = 188
+    private static let gap: CGFloat = 26
+    private static let fieldHeight: CGFloat = 56
 
-    // The hanging drop, while it is still a drop. One glass shape, authored by PendantDrop,
-    // rather than two shapes the union tries to bridge — see that file for why.
-    /// One value for the whole wobble. It is driven to 1 on arrival by a spring damped at
-    /// 0.3, so it overshoots past 1 and rings — the drop squashes, rebounds and settles.
-    /// Width takes the inverse, which is what makes it read as liquid rather than as a
-    /// picture being resized.
-    private var stretchH: CGFloat {
-        if search.arrived { return 1 + (search.breathing ? Self.breathRound : 0) }
-        return search.stretched ? Self.stretchTall : 1
-    }
-
-    private var stretchW: CGFloat {
-        if search.arrived { return 1 - (search.breathing ? Self.breathRound : 0) }
-        return search.stretched ? Self.stretchNarrow : 1
-    }
-
-    private var squashW: CGFloat { stretchW }
-    private var squashH: CGFloat { stretchH }
-
-    private var dropTopRadius: CGFloat { lerp(Self.listDrop / 2, Self.neckBead / 2, drip) * pop }
-    private var dropBottomRadius: CGFloat { Self.listDrop / 2 * pop * squashH }
-    /// From "as wide as the drop" (no neck at all, just one ball) down to nothing.
-    private var dropWaist: CGFloat { lerp(Self.listDrop / 2, 0, drip) * pop }
-    private var dropWidth: CGFloat { Self.listDrop * pop * squashW }
-    private var dropHeight: CGFloat {
-        let fallen = lerp(Self.listDrop, Self.fallGap + Self.listDrop, drip)
-        // Only the bulb flattens; the distance already fallen is not undone by the impact.
-        return (fallen - Self.listDrop + Self.listDrop * squashH) * pop
-    }
-
-    /// The bar's outline once it is a bar; the whole pendant drop before that.
-    private var fieldGlassShape: AnyShape {
-        guard !search.shaped else { return AnyShape(fieldShape) }
-        return AnyShape(PendantDrop(topRadius: dropTopRadius,
-                                    bottomRadius: dropBottomRadius,
-                                    waist: dropWaist))
-    }
-    /// How far the lower droplet descends while the upper one is still held in the notch.
-    /// This is the neck: the union's bridge spans it, thinning as the gap opens, and snaps
-    /// once the gap passes the merge distance.
-    private static let fallGap: CGFloat = 286
-    /// Where the drop starts: tucked up behind the notch, so it is seen seeping out of it.
-    /// Negative, so the window clips it and only the emerging part shows.
-    private static let notchTop: CGFloat = -96
-    /// Past `mergeDistance`, so the bridge has snapped and the two are plainly apart.
-    private static let restingGap: CGFloat = 26
-    /// Barely drawn out at all. The corner radius is half the WIDTH, so any real
-    /// difference between the two turns the droplet into a vertical capsule instead of a
-    /// ball — which is exactly what it looked like. A falling drop is an egg, not a pill.
-    private static let hangingWidth: CGFloat = 0.96
-    private static let hangingHeight: CGFloat = 1.08
-    /// How far apart two glass shapes still count as one body — the container's spacing,
-    /// and the thing that decides how long the neck between them lasts. The system draws
-    /// its bridge only while the gap is under this, so it has to span whatever is being
-    /// crossed at the time: at 76 against a 286pt fall the neck vanished after the first
-    /// quarter, which is why it never looked like it was thinning.
-    private static let fallMerge: CGFloat = 340
-    private static let splitMerge: CGFloat = 96
-    /// Must stay under `restingGap`, or the two settle back into one body.
-    private static let restingMerge: CGFloat = 6
-
-    private var mergeDistance: CGFloat {
-        if search.shaped { return Self.restingMerge }
-        return search.separated ? Self.splitMerge : Self.fallMerge
-    }
-    /// While they are still droplets they stand further apart than they will as panels, so
-    /// the moment of being TWO of them is unmistakable before either starts to stretch.
-    private static let splitGap: CGFloat = 108
-    private static let fieldHeight: CGFloat = 74
-    /// The two droplets the panel is born as: a small one above, a larger one below.
-    private static let fieldDrop: CGFloat = 128
-    private static let listDrop: CGFloat = 232
-
-    /// Phase zero: 0 = hanging in the notch, drawn out; 1 = landed and round.
-    private var drip: CGFloat { search.dripped ? 1 : 0 }
-    /// Phase one: 0 = the two droplets sit inside each other as a single drop, 1 = they
-    /// are apart. Only the gap reads from this.
-    private var split: CGFloat { search.separated ? 1 : 0 }
-    /// Phase two: 0 = still round droplets, 1 = the search bar and the panel.
-    private var shape: CGFloat { search.shaped ? 1 : 0 }
-
-    private func lerp(_ drop: CGFloat, _ panel: CGFloat, _ t: CGFloat) -> CGFloat {
-        drop + (panel - drop) * t
-    }
-
-    /// Surface tension gives out all at once: the drop swells for an instant, then goes.
-    private var pop: CGFloat { search.popping ? Self.popSwell : 1 }
-
-    private var dropW: CGFloat { lerp(Self.hangingWidth, 1, drip) * pop }
-    private var dropH: CGFloat { lerp(Self.hangingHeight, 1, drip) * pop }
-
-    /// What is left hanging at the notch once the mass has flowed down.
-    private static let neckBead: CGFloat = 52
-
-    /// While it is one drop the upper droplet is the SAME size as the lower one, so the two
-    /// coincide exactly and their union is precisely that circle — two concentric circles
-    /// of different diameters get unioned into a superellipse instead, which is where the
-    /// rounded-square look came from.
-    ///
-    /// Then, as the lower one falls away, this one EMPTIES into it. That is what makes the
-    /// neck thin: the system's bridge is no wider than the smaller of the two shapes it
-    /// spans, so a top that is draining pinches the column off. Moving the two ends further
-    /// apart, on its own, only makes a longer column of the same width — which is exactly
-    /// what it looked like.
-    private var upperDrop: CGFloat { lerp(Self.listDrop, Self.neckBead, drip) }
-
-    private var mergedGap: CGFloat { -(upperDrop + Self.listDrop) * dropH / 2 }
-
-    /// The union exists only for the morph. Left on at rest it fuses the two into a single
-    /// slab and the search bar stops reading as a search bar, so once they are shaped they
-    /// go back to being two independent bodies of glass.
-    private var unionID: String? { search.shaped ? nil : "panel" }
-
-    /// The gap the separation hangs on. `glassEffectUnion` merges two glass shapes by
-    /// proximity, so pulling them apart makes the system's own bridge between them thin
-    /// out and snap — there is no hand-drawn neck anywhere in here.
-    private var gap: CGFloat {
-        // Three stages in one expression: merged inside each other, then pulled apart by
-        // the fall — that stretch is the neck — then closed up to the resting gap as the
-        // droplets become the bar and the panel.
-        let fallen = lerp(mergedGap, Self.fallGap, drip)
-        let apart = lerp(fallen, Self.splitGap, split)
-        return lerp(apart, Self.restingGap, shape)
-    }
-
-    /// The fall. The window's top edge sits on the top edge of the screen, so a negative
-    /// inset puts the drop behind the notch and the window clips whatever is still up
-    /// there — it seeps out, falls, and settles where the panel belongs.
-    private var dripOffset: CGFloat {
-        // Driven by `shape`, not by `drip`: through the whole fall the upper droplet stays
-        // up in the notch and only the lower one descends. That is what leaves a neck
-        // between them — and it costs no third glass shape, which is the one thing that
-        // reliably pins the main thread inside NSHostingView's key-view walk.
-        let settled = lerp(Self.notchTop, Self.restingTop, shape)
-        // Floating on an air current it cannot see.
-        return settled + (search.breathing && !search.shaped ? -Self.breathRise : 0)
-    }
-
-    private var fieldSize: CGSize {
-        CGSize(width: lerp(upperDrop * dropW, Self.panelWidth, shape),
-               height: lerp(upperDrop * dropH, Self.fieldHeight, shape))
-    }
-
-    private var listSize: CGSize {
-        CGSize(width: lerp(Self.listDrop * dropW, Self.panelWidth, shape),
-               height: lerp(Self.listDrop * dropH, resultsHeight, shape))
-    }
-
-    /// A true circle while it is a droplet, settling to the panel's own radius.
-    ///
-    /// The style has to swap on the way. `.continuous` is Apple's squircle and never
-    /// reaches a circle: at half the side it still reads as a rounded square, which is
-    /// what made the droplet look boxy. `.circular` at half the side is an actual circle.
-    /// The swap happens once the shape has elongated enough for the two to be
-    /// indistinguishable, so the panel still rests on the squircle everything else uses.
-    private func dropletShape(side: CGFloat, radius: CGFloat) -> RoundedRectangle {
-        RoundedRectangle(cornerRadius: lerp(side * dropW / 2, radius, shape),
-                         style: shape < 0.45 ? .circular : .continuous)
+    /// The entrance: the slabs spring from slightly under full size up to it, overshooting
+    /// once on a lightly damped spring. Done with the FRAME, never with scaleEffect — a
+    /// transform forces the subtree offscreen and the glass stops sampling the live
+    /// backdrop, which is the whole effect.
+    private static let openScale: CGFloat = 0.94
+    private var scale: CGFloat {
+        search.opened || search.reduceMotion ? 1 : Self.openScale
     }
 
     /// A capsule: radius is half the height, so the ends are true semicircles. Spotlight's
     /// field is one, and at 28 mine read as a rounded box next to it.
     private var fieldShape: RoundedRectangle {
-        dropletShape(side: upperDrop, radius: Self.fieldHeight / 2)
+        RoundedRectangle(cornerRadius: Self.fieldHeight * scale / 2, style: .continuous)
     }
     /// 40, not 26. Lensing happens at the rim, and on a slab this size the rim is a
     /// hairline around a large frosted field — a wider curve puts more of the edge at an
     /// angle where it actually bends what is behind it.
-    private var listShape: RoundedRectangle { dropletShape(side: Self.listDrop, radius: 40) }
+    private var listShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 40, style: .continuous)
+    }
 
     /// The live system accent. Color.accentColor resolves to the asset-catalog accent and
     /// only falls back to the system one, so it is not the same guarantee.
@@ -232,11 +73,6 @@ struct RootView: View {
     /// Transparency swaps the glass out for a solid window background.
     private var glass: Glass {
         guard !search.reduceTransparency else { return .identity }
-        // A droplet is nearly all backdrop: .clear is the transparent member of the family
-        // and takes no tint, so it reads as a lens. .opacity() is not an option here — it
-        // forces the subtree offscreen and the glass stops sampling the live backdrop,
-        // which is the whole effect.
-        guard search.shaped else { return .clear.interactive() }
         // The tint follows System Settings > Appearance, and nothing else: NSGlassTintAmount
         // is the only key the system exposes for that slider. At 0 the glass takes no
         // pigment at all, which is also when the rim reads most three-dimensional — pigment
@@ -252,6 +88,15 @@ struct RootView: View {
         search.reduceTransparency ? AnyShapeStyle(.windowBackground) : AnyShapeStyle(.clear)
     }
 
+    /// A hairline just inside the rim. The glass draws its own edge, but over a busy or
+    /// low-contrast backdrop that edge washes out and the slab loses its outline. `.primary`
+    /// so it inverts with the appearance, and `strokeBorder` so the line sits inside the
+    /// shape instead of straddling it. An overlay composites above the glass — it does not
+    /// filter the subtree, so the backdrop sampling underneath is untouched.
+    private func rim(_ shape: RoundedRectangle) -> some View {
+        shape.strokeBorder(.primary.opacity(0.10), lineWidth: 0.5)
+    }
+
     /// Two glass slabs in one container sharing a namespace: they sample the same backdrop
     /// and lens into each other across the gap, which is where the Liquid Glass distortion
     /// actually comes from. A single flat slab shows almost none of it.
@@ -264,23 +109,21 @@ struct RootView: View {
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onClose)
 
-            GlassEffectContainer(spacing: mergeDistance) {
-                VStack(spacing: gap) {
+            GlassEffectContainer(spacing: 0) {
+                VStack(spacing: Self.gap) {
                     field
                         // Animating a frame is layout, not a transform: it does not force
                         // the subtree offscreen the way scaleEffect would, so the glass
-                        // keeps sampling the live backdrop all the way through the morph.
-                        .frame(width: search.shaped ? fieldSize.width : dropWidth,
-                               height: search.shaped ? fieldSize.height : dropHeight)
-                        .background(solidFallback, in: fieldGlassShape)
-                        .glassEffect(glass, in: fieldGlassShape)
+                        // keeps sampling the live backdrop through the whole entrance.
+                        .frame(width: Self.panelWidth * scale, height: Self.fieldHeight * scale)
+                        .background(solidFallback, in: fieldShape)
+                        .glassEffect(glass, in: fieldShape)
+                        .overlay { rim(fieldShape) }
                         .glassEffectID("field", in: _ns.wrappedValue)
-                        .glassEffectUnion(id: unionID, namespace: _ns.wrappedValue)
-                        .glassEffectTransition(.matchedGeometry)
 
-                    if search.rowCount > 0, search.expanded, search.shaped {
+                    if search.rowCount > 0, search.expanded {
                         results
-                            .frame(width: listSize.width, height: listSize.height)
+                            .frame(width: Self.panelWidth * scale, height: resultsHeight * scale)
                             // Clipped to the slab, and clipped BEFORE the glass: a selected
                             // cell scrolled past the rounded edge was drawing outside the
                             // panel. Applied after .glassEffect it would clip the glass
@@ -289,39 +132,16 @@ struct RootView: View {
                             .clipShape(listShape)
                             .background(solidFallback, in: listShape)
                             .glassEffect(glass, in: listShape)
+                            .overlay { rim(listShape) }
                             .glassEffectID("results", in: _ns.wrappedValue)
-                            .glassEffectUnion(id: unionID, namespace: _ns.wrappedValue)
-                            .glassEffectTransition(.matchedGeometry)
                     }
                 }
                 .padding(.horizontal, Self.outerPadding)
-                .padding(.top, dripOffset)
+                .padding(.top, Self.topInset)
             }
-            // Two springs, both lightly damped, and the overshoot IS the bounce: each value
-            // runs past its resting point and settles back, the way liquid rebounds after
-            // letting go. The split is the springier of the two, since that is the moment
-            // the bridge between the droplets snaps.
-            // Three beats, three springs, each given room to be seen. Driven together they
-            // cancel out: the drop is already a slab by the time the gap opens.
-            // Low damping on the landing so the drop wobbles as it settles, the way a real
-            // one does. tempo only stretches it for debugging; it is 1 by default.
-            // It does not accelerate into a floor — it meets an invisible cushion and
-            // brakes, coming to rest in mid-air. A pronounced easeOut is that braking.
-            .animation(.easeOut(duration: 0.62 * Controller.tempo), value: search.dripped)
-            .animation(.easeOut(duration: 0.18 * Controller.tempo), value: search.stretched)
-            // Barely damped on purpose: this spring IS the wobble, and 0.3 rings for about
-            // a second before it settles.
-            .animation(.spring(response: 0.4 * Controller.tempo, dampingFraction: 0.3),
-                       value: search.arrived)
-            .animation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true),
-                       value: search.breathing)
-            // easeOut and short: a bubble stretches for a moment and lets go. A spring
-            // would bring it back, which is the one thing a burst never does.
-            .animation(.easeOut(duration: 0.13 * Controller.tempo), value: search.popping)
-            // Smoother than the rest on purpose: the neck has to be seen thinning, and a
-            // snappy spring crosses the whole merge distance before the eye catches it.
-            .animation(.spring(response: 0.38 * Controller.tempo, dampingFraction: 0.62), value: search.separated)
-            .animation(.spring(response: 0.30 * Controller.tempo, dampingFraction: 0.68), value: search.shaped)
+            // Lightly damped, and the overshoot IS the elastic: the slabs run just past
+            // full size and settle back.
+            .animation(.spring(response: 0.34, dampingFraction: 0.62), value: search.opened)
         }
         .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
         // Nothing here wraps the glass container in opacity, blur, scale or shadow. Every
@@ -343,23 +163,21 @@ struct RootView: View {
     private var field: some View {
         HStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 18, weight: .medium))
+                .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.secondary)
-            TextField("Cerca app e file", text: query)
+            TextField(loc("Search apps and files"), text: query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 22, weight: .regular))
+                .font(.system(size: 19, weight: .regular))
                 .foregroundStyle(.primary)
                 .focused(_focused.projectedValue)
                 .onSubmit(activate)
                 .onKeyPress(.leftArrow) { move(-1) }
                 .onKeyPress(.rightArrow) { move(1) }
-                .onKeyPress(.upArrow) { move(-step) }
-                .onKeyPress(.downArrow) { move(step) }
+                .onKeyPress(.upArrow) { move(-step(down: false)) }
+                .onKeyPress(.downArrow) { move(step(down: true)) }
         }
         .padding(.horizontal, 24)
         .frame(height: Self.fieldHeight)
-        .opacity(search.contentVisible ? 1 : 0)
-        .animation(.smooth(duration: 0.3), value: search.contentVisible)
     }
 
     // MARK: Rows
@@ -381,49 +199,75 @@ struct RootView: View {
         }
         if search.showsWebRow {
             out.append(RowModel(id: search.hits.count, icon: .symbol("globe"),
-                                title: "Cerca «\(search.text)» sul web",
-                                subtitle: "Apre il browser predefinito"))
+                                title: String(format: loc("Search the web for “%@”"), search.text),
+                                subtitle: loc("Opens your default browser")))
         }
         return out
     }
 
-    /// Moving inside the app grid steps by a whole row; moving in the file list steps by one.
-    private var step: Int { search.selection < search.appCount ? Self.columns : 1 }
+    /// Moving inside the grid steps by a whole row; moving in the list steps by one.
+    ///
+    /// Going DOWN out of the last grid row is clamped to the first list row. A full row's
+    /// worth would otherwise vault over the first few utilities or files, leaving rows that
+    /// could only be reached by arrowing back up.
+    private func step(down: Bool) -> Int {
+        guard search.selection < search.appCount else { return 1 }
+        guard down else { return Self.columns }
+        return min(Self.columns, search.appCount - search.selection)
+    }
 
-    private var appRows: [RowModel] { Array(rows.prefix(search.appCount)) }
-    private var fileRows: [RowModel] { Array(rows.dropFirst(search.appCount)) }
+    /// Section sizes, read straight off the counts rather than off `rows`. Building the row
+    /// models is O(hits) with a `prettyPath` per row, and `body` can run many times per
+    /// frame during the entrance — so nothing that only needs a COUNT is allowed to build
+    /// them. `results` materialises the models exactly once and slices that one array.
+    private var appGridCount: Int { search.appCount - search.recentCount }
+    private var listCount: Int { search.rowCount - search.appCount }
+
+    private func grid(_ models: [RowModel]) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.fixed(Self.cellWidth), spacing: 0),
+                                 count: Self.columns), spacing: Self.cellGap) {
+            ForEach(models) { cell(model: $0) }
+        }
+    }
 
     private var results: some View {
-        ScrollViewReader { proxy in
+        // Built once here, then sliced. Going through the `rows` getter per section would
+        // rebuild the whole array for every access, several times per body evaluation.
+        let all = rows
+        let recentRows = Array(all.prefix(search.recentCount))
+        let appRows = Array(all.dropFirst(search.recentCount).prefix(appGridCount))
+        let listRows = Array(all.dropFirst(search.appCount))
+
+        return ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if !appRows.isEmpty {
-                        header("Applicazioni")
-                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(Self.cellWidth), spacing: 0),
-                                                 count: Self.columns), spacing: Self.cellGap) {
-                            ForEach(appRows) { cell(model: $0) }
-                        }
-                        .padding(.bottom, 10)
+                    if !recentRows.isEmpty {
+                        header(loc("Recent"))
+                        grid(recentRows)
                     }
-                    if !fileRows.isEmpty {
-                        if !appRows.isEmpty { header("Altri risultati") }
+                    if !appRows.isEmpty {
+                        if !recentRows.isEmpty { separator }
+                        header(loc("Applications"))
+                        grid(appRows)
+                            .padding(.bottom, 10)
+                    }
+                    if !listRows.isEmpty {
+                        if !recentRows.isEmpty || !appRows.isEmpty { separator }
+                        // One name for the catch-all in both modes, the way Spotlight has a
+                        // single "Altro": below this line are the utilities while browsing,
+                        // and the file hits once a term is typed.
+                        header(loc("Other"))
                         LazyVStack(spacing: 2) {
-                            ForEach(fileRows) { row(model: $0) }
+                            ForEach(listRows) { row(model: $0) }
                         }
                         .padding(.horizontal, 8)
                         .padding(.bottom, 8)
                     }
                 }
                 .padding(.top, 4)
-                // Inside the glass, so this touches the content and not the glass layer.
-                .opacity(search.contentVisible ? 1 : 0)
-                .blur(radius: search.contentVisible ? 0 : 7)
-                .offset(y: search.contentVisible ? 0 : 12)
-                .animation(.smooth(duration: 0.34), value: search.contentVisible)
             }
             .scrollIndicators(.never)
             .scrollBounceBehavior(.basedOnSize)
-            .frame(height: resultsHeight)
             .overlay {
                 if search.launching != nil {
                     // The same matched highlight, now the size of the slab: it grows out of
@@ -444,19 +288,39 @@ struct RootView: View {
     /// Snapped to whole rows and whole grid lines, so neither section ends half-drawn.
     private var resultsHeight: CGFloat {
         var height: CGFloat = 4
-        if !appRows.isEmpty {
-            let lines = (appRows.count + Self.columns - 1) / Self.columns
-            height += Self.headerHeight + CGFloat(min(lines, 4)) * Self.cellHeight + 10 - Self.cellGap
+        // Every section but the first is preceded by a separator, so this tracks whether
+        // one has already been drawn.
+        var following = false
+        if search.recentCount > 0 {
+            height += Self.headerHeight + Self.cellHeight - Self.cellGap // always one row
+            following = true
         }
-        if !fileRows.isEmpty {
-            if !appRows.isEmpty { height += Self.headerHeight }
-            height += CGFloat(min(fileRows.count, 5)) * Self.rowHeight + 8
+        if appGridCount > 0 {
+            if following { height += Self.separatorBlock }
+            let lines = (appGridCount + Self.columns - 1) / Self.columns
+            height += Self.headerHeight + CGFloat(min(lines, 4)) * Self.cellHeight + 10 - Self.cellGap
+            following = true
+        }
+        if listCount > 0 {
+            if following { height += Self.separatorBlock }
+            height += Self.headerHeight + CGFloat(min(listCount, 5)) * Self.rowHeight + 8
         }
         // The window is a fixed size now, so the slab cannot grow past what fits in it.
         return min(height, 452)
     }
 
     private static let headerHeight: CGFloat = 26
+    /// The rule plus the padding around it, which `resultsHeight` has to account for.
+    private static let separatorBlock: CGFloat = 13
+
+    /// A hairline between sections, not a hard rule: the panel is one surface.
+    private var separator: some View {
+        Divider()
+            .opacity(0.6)
+            .padding(.horizontal, 18)
+            .padding(.top, 10)
+            .padding(.bottom, 2)
+    }
 
     private func header(_ title: String) -> some View {
         Text(title.uppercased())
@@ -559,7 +423,6 @@ struct RootView: View {
             }
         } else if let hit = search.selectedHit {
             search.record(hit)
-            search.separated = false // the panel flows back into one body as it swallows the pick
             search.launching = hit.id
             // Let the flood play, then launch and dismiss.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.19) {

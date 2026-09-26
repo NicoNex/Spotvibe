@@ -1,0 +1,18 @@
+/* The development language. Keys ARE the English text, so a missing translation — or
+   running the binary outside the .app bundle, where there are no resources at all —
+   degrades to readable English rather than to a raw key. */
+
+"Search apps and files" = "Search apps and files";
+"Recent" = "Recent";
+"Applications" = "Applications";
+"Other" = "Other";
+
+/* %@ is the term the user typed. */
+"Search the web for “%@”" = "Search the web for “%@”";
+"Opens your default browser" = "Opens your default browser";
+
+/* Menu bar. The trailing text is the hotkey, shown inline because a status-item menu
+   cannot display a key equivalent for a Carbon-registered global hotkey. */
+"Open SpotVibe  ⌥Space" = "Open SpotVibe  ⌥Space";
+"Open SpotVibe  (⌥Space unavailable)" = "Open SpotVibe  (⌥Space unavailable)";
+"Quit" = "Quit";
