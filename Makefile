@@ -5,23 +5,27 @@ VERSION  := 1.0.0
 BIN      := spotvibe
 DIST     := dist
 APPDIR   := $(DIST)/$(APP).app
-RELEASE  := .build/release/$(BIN)
+## Which configuration the binary and the bundle are built from. `make run` flips this to
+## debug, because a release build spends a minute on optimisation nobody needs to look at a
+## panel; everything else stays release.
+CONFIG   ?= release
+BUILT     = .build/$(CONFIG)/$(BIN)
 
 .PHONY: all build app dmg run test clean icon
 
 ## Default: just the terminal binary. `make app` builds the bundle, `make dmg` the image.
 all: build
 
-## build — release binary at .build/release/spotvibe
+## build — binary at .build/$(CONFIG)/spotvibe (release unless CONFIG says otherwise)
 build:
-	swift build -c release
-	@echo "built $(RELEASE)"
+	swift build -c $(CONFIG)
+	@echo "built $(BUILT)"
 
 ## app — .app bundle (agent app: menu bar only, no Dock icon)
 app: build
 	rm -rf "$(APPDIR)"
 	mkdir -p "$(APPDIR)/Contents/MacOS" "$(APPDIR)/Contents/Resources"
-	cp "$(RELEASE)" "$(APPDIR)/Contents/MacOS/$(APP)"
+	cp "$(BUILT)" "$(APPDIR)/Contents/MacOS/$(APP)"
 	printf '%s' 'APPL????' > "$(APPDIR)/Contents/PkgInfo"
 	# Localisations. Plain .lproj folders read through Bundle.main, so no SwiftPM resource
 	# bundle is needed — but it does mean the strings exist only in the .app, which is why
@@ -59,9 +63,10 @@ dmg: app
 	rm -rf "$(DIST)/stage"
 	@echo "built $(DIST)/$(APP)-$(VERSION).dmg"
 
-## run — build and launch in the FOREGROUND, so trace output lands in this terminal and
+## run — DEBUG build, launched in the FOREGROUND, so trace output lands in this terminal and
 ## ctrl-C stops it. The panel opens by itself; `make run DEMO=cal` opens it with a term
 ## already typed. Use `make app && open dist/SpotVibe.app` to leave one running detached.
+run: CONFIG := debug
 run: app
 	pkill -x "$(APP)" || true
 	SPOTVIBE_DEMO="$(DEMO)" SPOTVIBE_TRACE=1 "$(APPDIR)/Contents/MacOS/$(APP)"

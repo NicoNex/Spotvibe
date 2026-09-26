@@ -86,10 +86,13 @@ struct SettingsView: View {
     private var _recorder = State(initialValue: HotKeyRecorder())
     private var recorder: HotKeyRecorder { _recorder.wrappedValue }
 
-    /// A Force Touch trackpad is the only thing that renders these, so they are a bonus for
-    /// the hardware that has one rather than the feedback the change depends on.
+    /// Fired ONLY where a value changes without a click: recording a shortcut, which is
+    /// committed by the keyboard. Everywhere else the trackpad is already clicking — once
+    /// going down and once coming back up — and a tap of our own on top of the release
+    /// click is the doubled click you feel. `.alignment` and not `.levelChange`: the level
+    /// pattern is the force-click detent, which is itself two taps.
     private func haptic() {
-        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
     }
 
     var body: some View {
@@ -190,19 +193,20 @@ struct SettingsView: View {
             .padding(.bottom, 2)
     }
 
-    /// Bindings rather than direct writes, so the haptic fires exactly when the value
-    /// actually changes and not on every redraw.
+    // Plain bindings. They used to fire a haptic on every change, which is where the double
+    // click came from: AppKit already performs feedback for a segmented control and a
+    // switch, and the trackpad clicks on release regardless.
     private var thicknessBinding: Binding<Preferences.Thickness> {
-        Binding(get: { settings.thickness }, set: { settings.thickness = $0; haptic() })
+        Binding(get: { settings.thickness }, set: { settings.thickness = $0 })
     }
     private var scopeBinding: Binding<Preferences.Scope> {
-        Binding(get: { settings.scope }, set: { settings.scope = $0; haptic() })
+        Binding(get: { settings.scope }, set: { settings.scope = $0 })
     }
     private var engineBinding: Binding<Preferences.Engine> {
-        Binding(get: { settings.engine }, set: { settings.engine = $0; haptic() })
+        Binding(get: { settings.engine }, set: { settings.engine = $0 })
     }
     private var recentsBinding: Binding<Bool> {
-        Binding(get: { settings.showRecents }, set: { settings.showRecents = $0; haptic() })
+        Binding(get: { settings.showRecents }, set: { settings.showRecents = $0 })
     }
 
     private var recorderButton: some View {

@@ -60,7 +60,18 @@ struct RootView: View {
     /// A capsule: radius is half the height, so the ends are true semicircles. Spotlight's
     /// field is one, and at 28 mine read as a rounded box next to it.
     private var fieldShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Self.fieldHeight * scale / 2, style: .continuous)
+        RoundedRectangle(cornerRadius: search.showingSettings ? 40 : Self.fieldHeight * scale / 2,
+                         style: .continuous)
+    }
+    /// The bar grows into the panel from the LEFT while the gear grows into it from the
+    /// right. Both end on exactly the same rectangle, so what the eye follows is two bodies
+    /// of glass running into each other and closing up, rather than one of them arriving
+    /// over a bar that only sat there and then stopped existing.
+    private var fieldWidthNow: CGFloat {
+        search.showingSettings ? Self.panelWidth * scale : Self.fieldWidth * scale
+    }
+    private var fieldHeightNow: CGFloat {
+        search.showingSettings ? Self.settingsHeight * scale : Self.fieldHeight * scale
     }
     /// The gear circle IS the settings panel, mid-morph: same element, same glass, a radius
     /// and a frame that interpolate. Continuous rather than circular so the curve is the
@@ -132,16 +143,31 @@ struct RootView: View {
     /// `withAnimation` at the mutation site rather than `.animation(value:)` on the
     /// container — though the real lesson was harder won: see the comment in `body` about
     /// never adding or removing a glass element while an animation is running.
+    static let morphSpring = Animation.spring(response: 0.46, dampingFraction: 0.80)
+
     private func showSettings(_ open: Bool) {
-        withAnimation(.spring(response: 0.46, dampingFraction: 0.80)) {
-            search.showingSettings = open
-        }
+        withAnimation(Self.morphSpring) { search.showingSettings = open }
     }
 
     /// The results slab collapses to nothing while the settings are open rather than being
     /// taken out of the tree: see the note in `body`.
     private var lowerHeight: CGFloat {
         search.showingSettings ? 0 : resultsHeight
+    }
+
+    /// The gap the results slab keeps from the field row. It closes on the way into the
+    /// settings, so the slab rises INTO the panel instead of dissolving where it stands —
+    /// with the union below, that is the three pieces running together.
+    private var lowerOffset: CGFloat {
+        Self.fieldHeight * scale + (search.showingSettings ? 0 : Self.gap)
+    }
+
+    /// One id per element while they are separate pieces, one id SHARED while the settings
+    /// are open: `glassEffectUnion` merges everything carrying the same id into a single
+    /// continuous surface, so the bar, the gear and the panel stop being three bodies of
+    /// glass that happen to touch and become one that the morph then reshapes.
+    private func unionID(_ own: String) -> String {
+        search.showingSettings ? "panel" : own
     }
 
     /// The glass takes its time; the writing on it does not. Left on the morph's own spring
@@ -204,7 +230,8 @@ struct RootView: View {
                             .glassEffect(glass, in: listShape)
                             .overlay { rim(listShape) }
                             .glassEffectID("results", in: _ns.wrappedValue)
-                            .padding(.top, Self.fieldHeight * scale + Self.gap)
+                            .glassEffectUnion(id: unionID("results"), namespace: _ns.wrappedValue)
+                            .padding(.top, lowerOffset)
                     }
 
                     // NO glass element is ever added or removed here. One that goes away
@@ -213,7 +240,14 @@ struct RootView: View {
                     // So the morph is the gear's OWN frame and corner radius: the circle
                     // grows into the settings panel while the field collapses into it, and
                     // the results slab drops to zero height. Same three elements throughout.
-                    HStack(alignment: .top, spacing: search.showingSettings ? 0 : Self.gearGap) {
+                    // The row OVERLAPS rather than stacking side by side. Laid out as an
+                    // HStack the field has to give up its width for the panel to have any,
+                    // so it retreated to the right and vanished into the gear — the bar
+                    // leaving, not the two of them joining. Here the bar does not move at
+                    // all: it keeps its size and place, and the panel grows leftwards over
+                    // it. Where they overlap, the union makes them one body of glass rather
+                    // than two stacked layers, which is the thing that reads as liquid.
+                    ZStack(alignment: .topLeading) {
                         field
                             // Opacity on the CONTENT, inside the glass — never on the
                             // element, which would rasterise the glass layer.
@@ -221,16 +255,24 @@ struct RootView: View {
                             // Out fast, for the same reason the results are: the placeholder
                             // would otherwise still be legible across the settings title.
                             .animation(.easeOut(duration: 0.10), value: search.showingSettings)
-                            // Animating a frame is layout, not a transform: it does not
-                            // force the subtree offscreen the way scaleEffect would, so
-                            // the glass keeps sampling the live backdrop throughout.
-                            .frame(width: search.showingSettings ? 0 : Self.fieldWidth * scale,
-                                   height: Self.fieldHeight * scale)
-                            .clipShape(fieldShape) // the text does not spill while it narrows
+                            .frame(width: fieldWidthNow, height: fieldHeightNow)
+                            // A beat behind the gear. Both bodies end on the same rectangle,
+                            // and the bar has almost no width left to gain, so on the same
+                            // curve it arrives first and the circle is left trailing after
+                            // it as a dot. Delayed, the order reads the way the press did:
+                            // the button opens, and the bar runs in after it.
+                            .animation(Self.morphSpring.delay(0.09), value: search.showingSettings)
+                            .clipShape(fieldShape)
                             .background(solidFallback, in: fieldShape)
                             .glassEffect(glass, in: fieldShape)
                             .overlay { rim(fieldShape) }
                             .glassEffectID("field", in: _ns.wrappedValue)
+                            // The bar stays OUT of the union. Put into it, its own body of
+                            // glass stopped being drawn the instant the id changed and the
+                            // bar simply blinked out; left out of it, it keeps its capsule
+                            // and the container's merge distance flows it into the panel as
+                            // the panel arrives over it.
+                            .glassEffectUnion(id: "field", namespace: _ns.wrappedValue)
 
                         gearSlab
                             .frame(width: gearWidth, height: gearHeight)
@@ -239,7 +281,13 @@ struct RootView: View {
                             .glassEffect(glass, in: gearShape)
                             .overlay { rim(gearShape) }
                             .glassEffectID("gear", in: _ns.wrappedValue)
+                            .glassEffectUnion(id: unionID("gear"), namespace: _ns.wrappedValue)
+                            // Pinned to the right edge of the panel, so the circle stays
+                            // exactly where it was pressed and every new pixel it gains
+                            // appears on its left, running across the bar.
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                     }
+                    .frame(width: Self.panelWidth * scale, alignment: .leading)
                 }
                 .padding(.horizontal, Self.outerPadding)
                 .padding(.top, Self.topInset)
@@ -287,7 +335,9 @@ struct RootView: View {
     /// It toggles: the same circle opens the settings and closes them again.
     private var gear: some View {
         Button {
-            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+            // No haptic here: the click that got us here already produced one going down
+            // and produces another coming up, and a third tap between them is the doubled
+            // click. Haptics are kept for what has no click at all — see SettingsView.
             showSettings(!search.showingSettings)
         } label: {
             Image(systemName: "gearshape")
