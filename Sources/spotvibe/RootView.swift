@@ -119,6 +119,29 @@ struct RootView: View {
         return AnyShapeStyle(Color(nsColor: .windowBackgroundColor).opacity(scrim))
     }
 
+    /// `withAnimation` at the mutation site rather than `.animation(value:)` on the
+    /// container — though the real lesson was harder won: see the comment in `body` about
+    /// never adding or removing a glass element while an animation is running.
+    private func showSettings(_ open: Bool) {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
+            search.showingSettings = open
+        }
+    }
+
+    private var lowerHeight: CGFloat {
+        search.showingSettings ? Self.settingsHeight : resultsHeight
+    }
+
+    @ViewBuilder
+    private var lowerContent: some View {
+        if search.showingSettings {
+            SettingsView(settings: settings) { showSettings(false) }
+                .transition(.opacity)
+        } else {
+            results.transition(.opacity)
+        }
+    }
+
     /// A hairline just inside the rim. The glass draws its own edge, but over a busy or
     /// low-contrast backdrop that edge washes out and the slab loses its outline. `.primary`
     /// so it inverts with the appearance, and `strokeBorder` so the line sits inside the
@@ -142,51 +165,46 @@ struct RootView: View {
 
             GlassEffectContainer(spacing: 0) {
                 VStack(spacing: Self.gap) {
-                    if search.showingSettings {
-                        // One slab standing in for the field, the gear and the results at
-                        // once. It carries the GEAR's id, so the system grows it out of that
-                        // little circle instead of cross-fading a new shape in.
-                        SettingsView(settings: settings) { search.showingSettings = false }
-                            .frame(width: Self.panelWidth, height: Self.settingsHeight)
+                    // The field row is NEVER unmounted, not even for settings. Adding or
+                    // removing a glass element with an animation running leaves whatever
+                    // comes back un-hit-testable — the gear returned looking fine and then
+                    // ignored every click. So the glass stays put and only what is drawn
+                    // inside it changes.
+                    HStack(spacing: Self.gearGap) {
+                        field
+                            // Animating a frame is layout, not a transform: it does not
+                            // force the subtree offscreen the way scaleEffect would, so
+                            // the glass keeps sampling the live backdrop throughout.
+                            .frame(width: Self.fieldWidth * scale, height: Self.fieldHeight * scale)
+                            .background(solidFallback, in: fieldShape)
+                            .glassEffect(glass, in: fieldShape)
+                            .overlay { rim(fieldShape) }
+                            .glassEffectID("field", in: _ns.wrappedValue)
+
+                        gear
+                            .frame(width: Self.fieldHeight * scale, height: Self.fieldHeight * scale)
+                            .background(solidFallback, in: gearShape)
+                            .glassEffect(glass, in: gearShape)
+                            .overlay { rim(gearShape) }
+                            .glassEffectID("gear", in: _ns.wrappedValue)
+                    }
+
+                    if search.showingSettings || (search.rowCount > 0 && search.expanded) {
+                        // One slab, two contents. The height springs between the two and the
+                        // contents cross-fade — and because THEY are not glass, fading them
+                        // is free of every constraint the glass layer carries.
+                        lowerContent
+                            .frame(width: Self.panelWidth * scale, height: lowerHeight * scale)
+                            // Clipped to the slab, and clipped BEFORE the glass: a
+                            // selected cell scrolled past the rounded edge was drawing
+                            // outside the panel. Applied after .glassEffect it would clip
+                            // the glass layer itself, which rasterises it offscreen and
+                            // costs the backdrop sampling.
                             .clipShape(listShape)
                             .background(solidFallback, in: listShape)
                             .glassEffect(glass, in: listShape)
                             .overlay { rim(listShape) }
-                            .glassEffectID("gear", in: _ns.wrappedValue)
-                    } else {
-                        HStack(spacing: Self.gearGap) {
-                            field
-                                // Animating a frame is layout, not a transform: it does not
-                                // force the subtree offscreen the way scaleEffect would, so
-                                // the glass keeps sampling the live backdrop throughout.
-                                .frame(width: Self.fieldWidth * scale, height: Self.fieldHeight * scale)
-                                .background(solidFallback, in: fieldShape)
-                                .glassEffect(glass, in: fieldShape)
-                                .overlay { rim(fieldShape) }
-                                .glassEffectID("field", in: _ns.wrappedValue)
-
-                            gear
-                                .frame(width: Self.fieldHeight * scale, height: Self.fieldHeight * scale)
-                                .background(solidFallback, in: gearShape)
-                                .glassEffect(glass, in: gearShape)
-                                .overlay { rim(gearShape) }
-                                .glassEffectID("gear", in: _ns.wrappedValue)
-                        }
-
-                        if search.rowCount > 0, search.expanded {
-                            results
-                                .frame(width: Self.panelWidth * scale, height: resultsHeight * scale)
-                                // Clipped to the slab, and clipped BEFORE the glass: a
-                                // selected cell scrolled past the rounded edge was drawing
-                                // outside the panel. Applied after .glassEffect it would clip
-                                // the glass layer itself, which rasterises it offscreen and
-                                // costs the backdrop sampling.
-                                .clipShape(listShape)
-                                .background(solidFallback, in: listShape)
-                                .glassEffect(glass, in: listShape)
-                                .overlay { rim(listShape) }
-                                .glassEffectID("results", in: _ns.wrappedValue)
-                        }
+                            .glassEffectID("results", in: _ns.wrappedValue)
                     }
                 }
                 .padding(.horizontal, Self.outerPadding)
@@ -195,9 +213,6 @@ struct RootView: View {
             // Lightly damped, and the overshoot IS the elastic: the slabs run just past
             // full size and settle back.
             .animation(.spring(response: 0.34, dampingFraction: 0.62), value: search.opened)
-            // Springier and a touch slower than the entrance, because this one has a long
-            // way to travel — a circle the height of the field becomes the whole panel.
-            .animation(.spring(response: 0.44, dampingFraction: 0.78), value: search.showingSettings)
         }
         .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
         // Nothing here wraps the glass container in opacity, blur, scale or shadow. Every
@@ -209,7 +224,7 @@ struct RootView: View {
         .onChange(of: search.focusToken) { _, _ in focused = true }
         // Esc backs out of settings first, and only closes the panel from the search screen.
         .onExitCommand {
-            if search.showingSettings { search.showingSettings = false } else { onClose() }
+            if search.showingSettings { showSettings(false) } else { onClose() }
         }
         .task(id: search.text) {
             // `try?` here would swallow the cancellation and run the search anyway,
@@ -219,20 +234,21 @@ struct RootView: View {
         }
     }
 
-    /// Deliberately not a `Button`: the panel dismisses on any click that lands outside the
-    /// glass, so this needs a hit area that covers the whole circle, not just the glyph.
+    /// A Button rather than an `onTapGesture`, so it is reachable from the keyboard too.
+    /// It toggles: the same circle opens the settings and closes them again.
     private var gear: some View {
-        Image(systemName: "gearshape")
-            .font(.system(size: 18, weight: .medium))
-            .foregroundStyle(.secondary)
-            .rotationEffect(.degrees(search.showingSettings ? 90 : 0))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
-                search.showingSettings = true
-            }
-            .help(loc("Settings"))
+        Button {
+            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+            showSettings(!search.showingSettings)
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle()) // the whole circle, not just the glyph
+        }
+        .buttonStyle(.plain)
+        .help(loc("Settings"))
     }
 
     private var field: some View {
