@@ -57,8 +57,12 @@ public final class Frecency {
 
     /// What was learned for this exact term far outweighs a general habit, so a typed
     /// term can always override the globally most-used app.
+    ///
+    /// `query` must already be lowercased. It is called once per candidate — every app
+    /// plus every file hit, on every keystroke — and folding the case in here meant an
+    /// allocation per candidate for a string the caller had already folded once.
     public func score(query: String, path: String, now: Date = Date()) -> Double {
-        let typed = entries[Self.key(query.lowercased(), path)].map { decayed($0, now: now) } ?? 0
+        let typed = entries[Self.key(query, path)].map { decayed($0, now: now) } ?? 0
         let overall = entries[Self.key("", path)].map { decayed($0, now: now) } ?? 0
         return typed * 4 + overall
     }

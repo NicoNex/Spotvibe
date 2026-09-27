@@ -29,6 +29,12 @@ public final class Search {
         "/Library/", // app support, caches, containers — Spotlight hides all of it too
     ]
 
+    /// The one definition of the rule. Public so the tests exercise this and not a copy
+    /// of it — a suite that re-implements the predicate passes whatever the predicate does.
+    public static func isNoisy(_ path: String) -> Bool {
+        noisyPathFragments.contains(where: path.contains)
+    }
+
     public var text = "" { didSet { guard text != oldValue else { return }; rebuild() } }
     /// Precomputed, because a view body can run many times per frame and filtering
     /// several hundred apps there is pure waste.
@@ -48,8 +54,6 @@ public final class Search {
     /// Visible state drives the present/dismiss animation; the panel itself is ordered
     /// out only once that animation has finished.
     public var visible = false
-    /// Bumped on every show so the view can re-assert first responder.
-    public var focusToken = 0
     /// Mirrors System Settings > Accessibility > Display > Reduce transparency.
     public var reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
     /// Mirrors System Settings > Accessibility > Display > Reduce motion. The fade stays —
@@ -76,6 +80,10 @@ public final class Search {
     public var appearanceToken = 0
 
     private let apps: [Hit]
+    /// Built once beside `apps`: both are immutable, and this was being rebuilt — a
+    /// dictionary plus a throwaway array of several hundred tuples — every time the field
+    /// was emptied or the panel was hidden.
+    private let appsByPath: [String: Hit]
     private let query = NSMetadataQuery()
     private let warmup = NSMetadataQuery()
     private let frecency: Frecency
@@ -90,6 +98,7 @@ public final class Search {
          settings: Preferences = Preferences()) {
         self.frecency = frecency
         self.apps = apps
+        appsByPath = Dictionary(apps.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         self.settings = settings
         // Home by default: the whole-disk scope drags in caches, SDKs and system bundles,
         // which cost time and are never what anyone meant to open by name. Settings can
@@ -124,8 +133,13 @@ public final class Search {
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            self?.reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
-            self?.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            // Guarded: @Observable notifies on every assignment, equal or not, and each
+            // notification is a full re-evaluation of a panel full of glass.
+            guard let self else { return }
+            let transparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+            let motion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            if transparency != reduceTransparency { reduceTransparency = transparency }
+            if motion != reduceMotion { reduceMotion = motion }
         }
         NotificationCenter.default.addObserver(
             forName: NSColor.systemColorsDidChangeNotification, object: nil, queue: .main
@@ -135,7 +149,11 @@ public final class Search {
         NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.glassTint = Search.systemGlassTint()
+            // This fires for OUR OWN writes too — every settings change posts it — so
+            // without the comparison, flipping a toggle re-rendered the whole panel twice.
+            guard let self else { return }
+            let tint = Search.systemGlassTint()
+            if tint != glassTint { glassTint = tint }
         }
     }
 
@@ -151,10 +169,13 @@ public final class Search {
             // listed after, the way Spotlight keeps them out of the way of what you use.
             // Only here: once a term is typed, a utility is just another app and ranks on
             // its name like everything else.
-            let byPath = Dictionary(apps.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            // Only apps still installed: the store keeps a path long after the app is gone.
+            // Only apps still installed: the store keeps a path long after the app is gone,
+            // and files opened through the panel are in the same habit list. Both are
+            // dropped here, which is why more than a shelf's worth is asked for — taking
+            // exactly seven and then discarding some left the shelf short.
             let recent = settings.showRecents
-                ? frecency.habitual(limit: Self.recentLimit).compactMap { byPath[$0] }
+                ? frecency.habitual(limit: Self.recentLimit * 4)
+                    .compactMap { appsByPath[$0] }.prefix(Self.recentLimit)
                 : []
             // One partition rather than two filters with inverted predicates, which would
             // have to be kept in step by eye. Shelved apps fall out of both, or the same
@@ -167,19 +188,24 @@ public final class Search {
             }
             recentCount = recent.count
             appCount = recent.count + grid.count
-            hits = recent + grid + utilities
+            hits = Array(recent) + grid + utilities
         } else {
             recentCount = 0
-            let matching = apps.filter { $0.matches(text) }
-            let taken = Set(matching.map(\.id))
             let now = Date()
             let term = text.lowercased()
-            let rankedApps = matching
-                .map { (hit: $0, rank: rank($0, term: term, now: now)) }
-                .sorted { $0.rank > $1.rank }.map(\.hit)
-            let rankedFiles = fileHits.filter { !taken.contains($0.id) }
-                .map { (hit: $0, rank: rank($0, term: term, now: now)) }
-                .sorted { $0.rank > $1.rank }.prefix(40).map(\.hit)
+            var taken = Set<String>()
+            let rankedApps = ranked(apps, term: term, now: now) { hit in
+                guard hit.matches(text) else { return false }
+                taken.insert(hit.id)
+                return true
+            }
+            // `$0.matches(text)` and not merely "not already an app hit": run() narrows
+            // the interim hits, but it is debounced by 120 ms, and for that window this is
+            // the only thing standing between a fast Return and a file the term no longer
+            // matches at all.
+            let rankedFiles = Array(ranked(fileHits, term: term, now: now) {
+                !taken.contains($0.id) && $0.matches(text)
+            }.prefix(40))
             // Apps stay a contiguous leading block, because the view draws them as a grid.
             appCount = rankedApps.count
             hits = rankedApps + rankedFiles
@@ -198,13 +224,17 @@ public final class Search {
         // shows a correct interim list instead of blanking the panel on every keystroke.
         // Any other edit invalidates them, and they go — leaving them would let a fast
         // Return open whatever the *previous* term found.
+        let had = fileHits.count
         if term.hasPrefix(lastTerm), !lastTerm.isEmpty {
             fileHits = fileHits.filter { $0.matches(term) }
         } else {
             fileHits = []
         }
         lastTerm = term
-        rebuild()
+        // `text`'s own didSet has already rebuilt for this term. Doing it again is only
+        // worth a full re-rank and re-sort of every app when the file half actually moved,
+        // which for a term under two characters it never has.
+        if fileHits.count != had { rebuild() }
         guard term.count >= 2 else { return }
         startedAt = Date()
         // %@ substitution makes the term a literal, so nothing escapes into the query
@@ -218,21 +248,52 @@ public final class Search {
 
     /// The scope changed under a live query. Whatever it had gathered is for the old scope,
     /// so it is thrown away and the same term is asked again.
+    /// Republishes the list against the current preferences, keeping the highlight where
+    /// it was. The recents shelf is built in `rebuild`, so turning it off has to run this
+    /// or nothing changes until the panel is next opened.
+    public func refresh() {
+        rebuild(preserving: selectedHit?.id)
+    }
+
     public func rescope() {
         guard !text.isEmpty else { return }
+        invalidateFileHits()
+        run(text)
+    }
+
+    /// The interim hits and the term they belong to are one fact in two fields, and they
+    /// are always cleared together.
+    private func invalidateFileHits() {
         fileHits = []
         lastTerm = ""
-        run(text)
+    }
+
+    /// Filter, score and sort in one pass. Written out rather than chained because the
+    /// chained form allocated an array for the filter, another for the scored tuples and a
+    /// third for the sorted result — three copies of the app list on every keystroke.
+    private func ranked(_ pool: [Hit], term: String, now: Date,
+                        where include: (Hit) -> Bool) -> [Hit] {
+        var scored: [(hit: Hit, rank: Double)] = []
+        scored.reserveCapacity(pool.count)
+        for hit in pool where include(hit) {
+            scored.append((hit, rank(hit, term: term, now: now)))
+        }
+        scored.sort { $0.rank > $1.rank }
+        return scored.map(\.hit)
     }
 
     /// Ranking within a pool, most significant first: what this term has opened before,
     /// then an exact name, then a prefix match over a mere substring, then the shorter
     /// name. Everything unlearned scores the same, so frecency only ever promotes.
     private func rank(_ hit: Hit, term: String, now: Date) -> Double {
-        var score = frecency.score(query: text, path: hit.id, now: now) * 1000
+        var score = frecency.score(query: term, path: hit.id, now: now) * 1000
+        // Both names, the same pair `matches` admits. Scoring the displayed name alone
+        // meant an app found through its name on disk — Impostazioni di Sistema, matched by
+        // typing "system" — earned no bonus at all and was ordered purely on length.
         let name = hit.name.lowercased()
-        if name == term { score += 50 }
-        else if name.hasPrefix(term) { score += 25 }
+        let onDisk = hit.fileName.lowercased()
+        if name == term || onDisk == term { score += 50 }
+        else if name.hasPrefix(term) || onDisk.hasPrefix(term) { score += 25 }
         // Worth less than a prefix match on purpose: how well the name fits what was typed
         // decides the order, and recency only sorts out the ties underneath it. Same decay
         // as the frecency store, on a shorter half-life — a file touched this week should
@@ -245,6 +306,9 @@ public final class Search {
     }
 
     private static let usedHalfLife: TimeInterval = 14 * 24 * 3600
+    /// Read once. `ProcessInfo.environment` builds the whole dictionary on every access,
+    /// and this was tested once per Spotlight batch.
+    private static let timing = ProcessInfo.processInfo.environment["SPOTVIBE_TIME"] != nil
 
     /// Called when something is actually opened — the only signal worth learning from.
     public func record(_ hit: Hit) {
@@ -260,8 +324,7 @@ public final class Search {
 
     public func reset() {
         query.stop()
-        fileHits = []
-        lastTerm = ""
+        invalidateFileHits()
         text = ""
         launching = nil
         opened = false
@@ -275,15 +338,24 @@ public final class Search {
         defer { query.enableUpdates() }
 
         let previous = selectedHit?.id
+        // `selectedHit` is nil when the web row is highlighted, so preserving by id alone
+        // dropped that selection back to 0 on every Spotlight batch — and a batch arrives
+        // every 0.3 s while a query is live. Return then launched an app instead of
+        // opening the browser.
+        let wasWebRow = webRowSelected
         var seen = Set<String>()
         var out: [Hit] = []
         // Unsorted, so this is an arbitrary slice — wide enough that local ranking has
         // something to choose from, small enough to stay cheap: 150 costs ~35 ms of attribute reads, 300 costs ~70 ms.
-        for i in 0 ..< query.resultCount where out.count < 150 {
+        // `while`, not `for … where`: the filtered form kept walking every remaining
+        // index after the slice was full, and a broad term has tens of thousands.
+        var i = 0
+        while i < query.resultCount, out.count < 150 {
+            defer { i += 1 }
             guard let item = query.result(at: i) as? NSMetadataItem,
                   let path = item.value(forAttribute: kMDItemPath as String) as? String,
                   !path.hasSuffix(".app"), // apps come from `apps`, deduped and better ranked
-                  !Self.noisyPathFragments.contains(where: path.contains),
+                  !Self.isNoisy(path),
                   let name = item.value(forAttribute: kMDItemDisplayName as String) as? String,
                   seen.insert(path).inserted
             else { continue }
@@ -297,20 +369,21 @@ public final class Search {
         fileHits = out
         // A live update must not yank the highlight out from under the arrow keys.
         rebuild(preserving: previous)
-        if ProcessInfo.processInfo.environment["SPOTVIBE_TIME"] != nil {
+        if wasWebRow { selection = hits.count }
+        if Self.timing {
             let ms = Date().timeIntervalSince(startedAt) * 1000
             FileHandle.standardError.write(
                 String(format: "query %@: %.0f ms, %d file hits\n", text, ms, out.count).data(using: .utf8)!)
         }
     }
 
-    /// ponytail: a plain directory listing, read once at launch. No FSEvents watcher —
-    /// add one only if installing an app mid-session and not finding it becomes a real gripe.
     static func systemGlassTint() -> Double {
         // Absent on a system that does not expose the slider; 0.5 is what it ships at.
         (UserDefaults.standard.object(forKey: "NSGlassTintAmount") as? Double) ?? 0.5
     }
 
+    /// ponytail: a plain directory listing, read once at launch. No FSEvents watcher —
+    /// add one only if installing an app mid-session and not finding it becomes a real gripe.
     public static func installedApps() -> [Hit] {
         let roots = ["/Applications", "/System/Applications", NSHomeDirectory() + "/Applications"]
         let fm = FileManager.default

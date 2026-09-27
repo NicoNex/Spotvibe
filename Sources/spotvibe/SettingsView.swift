@@ -103,7 +103,7 @@ struct SettingsView: View {
     /// going down and once coming back up — and a tap of our own on top of the release
     /// click is the doubled click you feel. `.alignment` and not `.levelChange`: the level
     /// pattern is the force-click detent, which is itself two taps.
-    private func haptic() {
+    private static func haptic() {
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
     }
 
@@ -118,7 +118,7 @@ struct SettingsView: View {
                     group(loc("Appearance"), rows: [
                         Self.Row(icon: "circle.lefthalf.filled", label: loc("Glass thickness")) {
                             AnyView(
-                                Picker("", selection: thicknessBinding) {
+                                Picker("", selection: bound.thickness) {
                                     Text(loc("Thin")).tag(Preferences.Thickness.thin)
                                     Text(loc("Medium")).tag(Preferences.Thickness.medium)
                                     Text(loc("Thick")).tag(Preferences.Thickness.thick)
@@ -132,7 +132,7 @@ struct SettingsView: View {
                     group(loc("Search"), rows: [
                         Self.Row(icon: "folder", label: loc("Look in")) {
                             AnyView(
-                                Picker("", selection: scopeBinding) {
+                                Picker("", selection: bound.scope) {
                                     Text(loc("Home folder")).tag(Preferences.Scope.home)
                                     Text(loc("Whole Mac")).tag(Preferences.Scope.everywhere)
                                 }
@@ -143,7 +143,7 @@ struct SettingsView: View {
                         },
                         Self.Row(icon: "clock.arrow.circlepath", label: loc("Show recents")) {
                             AnyView(
-                                Toggle("", isOn: recentsBinding)
+                                Toggle("", isOn: bound.showRecents)
                                     .toggleStyle(.switch)
                                     .labelsHidden()
                             )
@@ -159,7 +159,7 @@ struct SettingsView: View {
                     group(loc("Web"), rows: [
                         Self.Row(icon: "magnifyingglass", label: loc("Search engine")) {
                             AnyView(
-                                Picker("", selection: engineBinding) {
+                                Picker("", selection: bound.engine) {
                                     ForEach(Preferences.Engine.allCases) { Text($0.label).tag($0) }
                                 }
                                 .labelsHidden()
@@ -197,7 +197,7 @@ struct SettingsView: View {
     /// Fills the space the shorter column leaves rather than padding it out, and answers the
     /// one question the recorder raises the moment anyone looks at it.
     private var hint: some View {
-        Text(loc("Click, then press the keys you want. Esc cancels."))
+        Text(Self.recorderHint)
             .font(.system(size: 11))
             .foregroundStyle(.tertiary)
             .fixedSize(horizontal: false, vertical: true)
@@ -205,31 +205,24 @@ struct SettingsView: View {
             .padding(.bottom, 2)
     }
 
-    // Plain bindings. They used to fire a haptic on every change, which is where the double
-    // click came from: AppKit already performs feedback for a segmented control and a
-    // switch, and the trackpad clicks on release regardless.
-    private var thicknessBinding: Binding<Preferences.Thickness> {
-        Binding(get: { settings.thickness }, set: { settings.thickness = $0 })
-    }
-    private var scopeBinding: Binding<Preferences.Scope> {
-        Binding(get: { settings.scope }, set: { settings.scope = $0 })
-    }
-    private var engineBinding: Binding<Preferences.Engine> {
-        Binding(get: { settings.engine }, set: { settings.engine = $0 })
-    }
-    private var recentsBinding: Binding<Bool> {
-        Binding(get: { settings.showRecents }, set: { settings.showRecents = $0 })
-    }
+    private static let recorderHint = loc("Click, then press the keys you want. Esc cancels.")
+
+    // Plain bindings, no haptic. They used to fire one on every change, which is where the
+    // double click came from: AppKit already performs feedback for a segmented control and
+    // a switch, and the trackpad clicks on release regardless.
+    private var bound: Bindable<Preferences> { Bindable(settings) }
 
     private var recorderButton: some View {
         Button {
-            recorder.onCapture = { code, modifiers, label in
+            // `[settings]`, not self: the recorder lives in this view's state, so a closure
+            // holding the view would hold the recorder that holds the closure.
+            recorder.onCapture = { [settings] code, modifiers, label in
                 settings.setHotKey(code: code, modifiers: modifiers, label: label)
-                haptic()
+                Self.haptic()
             }
             // The controller watches this to let go of the global hotkey while we listen,
             // so the chord that is already bound can be pressed to confirm itself.
-            recorder.onActiveChanged = { settings.recording = $0 }
+            recorder.onActiveChanged = { [settings] in settings.recording = $0 }
             recorder.toggle()
         } label: {
             Text(recorder.active ? loc("Press a shortcut…") : settings.hotKeyLabel)
@@ -238,7 +231,7 @@ struct SettingsView: View {
                 .frame(width: 150)
         }
         .buttonStyle(.glass)
-        .help(loc("Click, then press the keys you want. Esc cancels."))
+        .help(Self.recorderHint)
     }
 
     // MARK: Chrome

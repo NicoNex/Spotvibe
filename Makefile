@@ -65,13 +65,13 @@ dmg: app
 	rm -rf "$(DIST)/stage"
 	@echo "built $(DIST)/$(APP)-$(VERSION).dmg"
 
-## run — DEBUG build, launched in the FOREGROUND, so trace output lands in this terminal and
+## run — DEBUG build, launched in the FOREGROUND, so query timings land in this terminal and
 ## ctrl-C stops it. The panel opens by itself; `make run DEMO=cal` opens it with a term
 ## already typed. Use `make app && open dist/SpotVibe.app` to leave one running detached.
 run: CONFIG := debug
 run: app
 	pkill -x "$(APP)" || true
-	SPOTVIBE_DEMO="$(DEMO)" SPOTVIBE_TRACE=1 "$(APPDIR)/Contents/MacOS/$(APP)"
+	SPOTVIBE_DEMO="$(DEMO)" SPOTVIBE_TIME=1 "$(APPDIR)/Contents/MacOS/$(APP)"
 
 ## icon — redraw Resources/icon.svg and rebuild the .icns. NOT a dependency of `app`:
 ## the .icns is committed, so building the bundle needs no librsvg. Run this only after

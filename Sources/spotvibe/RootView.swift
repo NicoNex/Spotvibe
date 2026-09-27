@@ -66,39 +66,37 @@ struct RootView: View {
 
     /// A capsule: radius is half the height, so the ends are true semicircles. Spotlight's
     /// field is one, and at 28 mine read as a rounded box next to it.
-    private var fieldShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: search.showingSettings ? 40 : Self.fieldHeight * scale / 2,
+    /// The bar and the gear share this: the morph is only convincing because both bodies
+    /// end on exactly the same rectangle, and two separately maintained expressions that
+    /// happen to agree is not the same thing as one that cannot disagree.
+    private var morphShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: search.showingSettings ? Self.slabRadius
+                                                              : Self.fieldHeight * scale / 2,
                          style: .continuous)
     }
+    private var morphHeight: CGFloat {
+        search.showingSettings ? Self.settingsHeight * scale : Self.fieldHeight * scale
+    }
     /// The bar grows into the panel from the LEFT while the gear grows into it from the
-    /// right. Both end on exactly the same rectangle, so what the eye follows is two bodies
-    /// of glass running into each other and closing up, rather than one of them arriving
-    /// over a bar that only sat there and then stopped existing.
+    /// right, so what the eye follows is two bodies of glass running into each other and
+    /// closing up, rather than one arriving over a bar that only sat there and stopped
+    /// existing. Only the widths differ; the height and the corner are `morph…` above.
     private var fieldWidthNow: CGFloat {
         search.showingSettings ? Self.panelWidth * scale : Self.fieldWidth * scale
-    }
-    private var fieldHeightNow: CGFloat {
-        search.showingSettings ? Self.settingsHeight * scale : Self.fieldHeight * scale
     }
     /// The gear circle IS the settings panel, mid-morph: same element, same glass, a radius
     /// and a frame that interpolate. Continuous rather than circular so the curve is the
     /// same family at both ends and the corner can actually be animated between them.
-    private var gearShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: search.showingSettings ? 40 : Self.fieldHeight * scale / 2,
-                         style: .continuous)
-    }
     private var gearWidth: CGFloat {
         search.showingSettings ? Self.panelWidth * scale : Self.fieldHeight * scale
-    }
-    private var gearHeight: CGFloat {
-        search.showingSettings ? Self.settingsHeight * scale : Self.fieldHeight * scale
     }
     /// 40, not 26. Lensing happens at the rim, and on a slab this size the rim is a
     /// hairline around a large frosted field — a wider curve puts more of the edge at an
     /// angle where it actually bends what is behind it.
     private var listShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 40, style: .continuous)
+        RoundedRectangle(cornerRadius: Self.slabRadius, style: .continuous)
     }
+    private static let slabRadius: CGFloat = 40
 
     /// The live system accent. Color.accentColor resolves to the asset-catalog accent and
     /// only falls back to the system one, so it is not the same guarantee.
@@ -194,6 +192,17 @@ struct RootView: View {
         shape.strokeBorder(.primary.opacity(0.10), lineWidth: 0.5)
     }
 
+    /// The one way a slab is dressed, in the one order that works: clipped BEFORE the glass
+    /// (after it, the clip would rasterise the glass layer offscreen and cost the backdrop
+    /// sampling), the scrim under the material, the rim over it.
+    private func slab<V: View>(_ content: V, in shape: RoundedRectangle) -> some View {
+        content
+            .clipShape(shape)
+            .background(solidFallback, in: shape)
+            .glassEffect(glass, in: shape)
+            .overlay { rim(shape) }
+    }
+
     /// Two glass slabs in one container sharing a namespace: they sample the same backdrop
     /// and lens into each other across the gap, which is where the Liquid Glass distortion
     /// actually comes from. A single flat slab shows almost none of it.
@@ -219,23 +228,17 @@ struct RootView: View {
                 // becoming another. Nothing below moves now; the panel simply covers it.
                 ZStack(alignment: .top) {
                     if search.showingSettings || (search.rowCount > 0 && search.expanded) {
-                        results
+                        // Clipped to the slab: a selected cell scrolled past the rounded
+                        // edge was drawing outside the panel.
+                        slab(results
                             // The slab drains on the morph's spring; the grid on it goes
                             // out immediately, or it stays readable under the settings
                             // panel that is growing over the same space.
                             .opacity(search.showingSettings ? 0 : 1)
                             .animation(.easeOut(duration: 0.10), value: search.showingSettings)
                             .frame(width: Self.panelWidth * scale, height: lowerHeight * scale,
-                                   alignment: .top)
-                            // Clipped to the slab, and clipped BEFORE the glass: a
-                            // selected cell scrolled past the rounded edge was drawing
-                            // outside the panel. Applied after .glassEffect it would clip
-                            // the glass layer itself, which rasterises it offscreen and
-                            // costs the backdrop sampling.
-                            .clipShape(listShape)
-                            .background(solidFallback, in: listShape)
-                            .glassEffect(glass, in: listShape)
-                            .overlay { rim(listShape) }
+                                   alignment: .top),
+                             in: listShape)
                             .glassEffectID("results", in: _ns.wrappedValue)
                             .glassEffectUnion(id: unionID("results"), namespace: _ns.wrappedValue)
                             .padding(.top, lowerOffset)
@@ -255,24 +258,21 @@ struct RootView: View {
                     // it. Where they overlap, the union makes them one body of glass rather
                     // than two stacked layers, which is the thing that reads as liquid.
                     ZStack(alignment: .topLeading) {
-                        field
+                        slab(field
                             // Opacity on the CONTENT, inside the glass — never on the
                             // element, which would rasterise the glass layer.
                             .opacity(search.showingSettings ? 0 : 1)
                             // Out fast, for the same reason the results are: the placeholder
                             // would otherwise still be legible across the settings title.
                             .animation(.easeOut(duration: 0.10), value: search.showingSettings)
-                            .frame(width: fieldWidthNow, height: fieldHeightNow)
+                            .frame(width: fieldWidthNow, height: morphHeight)
                             // A beat behind the gear. Both bodies end on the same rectangle,
                             // and the bar has almost no width left to gain, so on the same
                             // curve it arrives first and the circle is left trailing after
                             // it as a dot. Delayed, the order reads the way the press did:
                             // the button opens, and the bar runs in after it.
-                            .animation(Self.morphSpring.delay(0.09), value: search.showingSettings)
-                            .clipShape(fieldShape)
-                            .background(solidFallback, in: fieldShape)
-                            .glassEffect(glass, in: fieldShape)
-                            .overlay { rim(fieldShape) }
+                            .animation(Self.morphSpring.delay(0.09), value: search.showingSettings),
+                             in: morphShape)
                             .glassEffectID("field", in: _ns.wrappedValue)
                             // The bar stays OUT of the union. Put into it, its own body of
                             // glass stopped being drawn the instant the id changed and the
@@ -281,12 +281,7 @@ struct RootView: View {
                             // the panel arrives over it.
                             .glassEffectUnion(id: "field", namespace: _ns.wrappedValue)
 
-                        gearSlab
-                            .frame(width: gearWidth, height: gearHeight)
-                            .clipShape(gearShape)
-                            .background(solidFallback, in: gearShape)
-                            .glassEffect(glass, in: gearShape)
-                            .overlay { rim(gearShape) }
+                        slab(gearSlab.frame(width: gearWidth, height: morphHeight), in: morphShape)
                             .glassEffectID("gear", in: _ns.wrappedValue)
                             .glassEffectUnion(id: unionID("gear"), namespace: _ns.wrappedValue)
                             // Pinned to the right edge of the panel, so the circle stays
@@ -310,7 +305,8 @@ struct RootView: View {
         // rim refraction. Present and dismiss are animated on the NSPanel, in AppShell.
         .onAppear { focused = true }
         // The hosting view outlives every hide, so re-show has to re-assert focus itself.
-        .onChange(of: search.focusToken) { _, _ in focused = true }
+        // `visible` goes false on every hide, so each show is a change even mid-fade.
+        .onChange(of: search.visible) { _, shown in if shown { focused = true } }
         // Esc backs out of settings first, and only closes the panel from the search screen.
         .onExitCommand {
             if search.showingSettings { showSettings(false) } else { onClose() }
@@ -379,20 +375,33 @@ struct RootView: View {
 
     // MARK: Rows
 
-    private enum RowIcon { case file(URL), symbol(String) }
+    /// A path, not a URL. `URL(fileURLWithPath:)` stats the path to decide directory-ness,
+    /// and the only consumer turned it straight back into a string — so building one per
+    /// hit per body evaluation was a file-system probe per app, dozens of times a second
+    /// while an arrow key repeats.
+    private enum RowIcon { case file(String), symbol(String) }
 
     private struct RowModel: Identifiable {
         let id: Int
         let icon: RowIcon
         let title: String
-        let subtitle: String
+        /// Only the web row carries one. A path is prettified in `row(model:)` instead,
+        /// for the five rows actually drawn — building one for every hit meant several
+        /// hundred throwaway strings per body evaluation that no grid cell ever reads.
+        let subtitle: String?
+
+        /// The path behind the row, for the ones that have one.
+        var path: String? {
+            if case let .file(path) = icon { return path }
+            return nil
+        }
     }
 
     /// One list built in one pass, so row identities can never collide between renders
     /// and the web row can never disagree with `rowCount` about whether it exists.
     private var rows: [RowModel] {
         var out = search.hits.enumerated().map { index, hit in
-            RowModel(id: index, icon: .file(hit.url), title: hit.name, subtitle: prettyPath(hit.id))
+            RowModel(id: index, icon: .file(hit.id), title: hit.name, subtitle: nil)
         }
         if search.showsWebRow {
             out.append(RowModel(id: search.hits.count, icon: .symbol("globe"),
@@ -409,6 +418,15 @@ struct RootView: View {
     /// could only be reached by arrowing back up.
     private func step(down: Bool) -> Int {
         guard search.selection < search.appCount else { return 1 }
+        // The shelf is its own grid, `recentCount` cells wide — usually fewer than seven.
+        // So the cell under recents[i] is at recentCount + i, and stepping by the GRID's
+        // width across that boundary jumped columns going down and, coming up out of the
+        // first app row, overshot the shelf entirely and wrapped to the bottom of the list.
+        let shelf = search.recentCount
+        if shelf > 0 {
+            if search.selection < shelf { return shelf }
+            if !down, search.selection < shelf + Self.columns { return shelf }
+        }
         guard down else { return Self.columns }
         return min(Self.columns, search.appCount - search.selection)
     }
@@ -420,9 +438,11 @@ struct RootView: View {
     private var appGridCount: Int { search.appCount - search.recentCount }
     private var listCount: Int { search.rowCount - search.appCount }
 
+    private static let gridColumns = Array(repeating: GridItem(.fixed(cellWidth), spacing: 0),
+                                           count: columns)
+
     private func grid(_ models: [RowModel]) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.fixed(Self.cellWidth), spacing: 0),
-                                 count: Self.columns), spacing: Self.cellGap) {
+        LazyVGrid(columns: Self.gridColumns, spacing: Self.cellGap) {
             ForEach(models) { cell(model: $0) }
         }
     }
@@ -539,8 +559,8 @@ struct RootView: View {
     @ViewBuilder
     private func icon(_ icon: RowIcon, size: CGFloat, selected: Bool) -> some View {
         switch icon {
-        case let .file(url):
-            Image(nsImage: Icons.icon(forPath: url.path))
+        case let .file(path):
+            Image(nsImage: Icons.icon(forPath: path))
                 .resizable().frame(width: size, height: size)
         case let .symbol(name):
             Image(systemName: name)
@@ -554,7 +574,7 @@ struct RootView: View {
     // sample glass, so nesting a second glass layer inside the slab renders wrong.
     private func cell(model: RowModel) -> some View {
         let selected = model.id == search.selection
-        return VStack(spacing: 7) {
+        let content = VStack(spacing: 7) {
             // 72, not 57: a macOS app icon carries about 20% transparent margin inside its
             // canvas, so the glyph you actually see is ~0.8 of the frame. Spotlight shows a
             // 57pt glyph, which is this frame.
@@ -574,36 +594,42 @@ struct RootView: View {
                 .lineLimit(2).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
         .frame(width: Self.cellWidth - 10, height: Self.cellHeight - Self.cellGap)
-        .background { highlight(selected, cornerRadius: 14) }
-        .opacity(dimmed(selected))
-        .animation(.easeOut(duration: 0.16), value: search.launching)
-        .contentShape(Rectangle())
-        .id(model.id)
-        .onTapGesture { search.selection = model.id; activate() }
+        return selectable(content, model, selected: selected, cornerRadius: 14)
+    }
+
+    /// What a grid cell and a list row have in common once laid out: the colour that
+    /// flips on the highlight, the highlight itself, the dimming during a launch, and a
+    /// hit area and scroll id covering the whole thing.
+    private func selectable<V: View>(_ content: V, _ model: RowModel, selected: Bool,
+                                     cornerRadius: CGFloat) -> some View {
+        content
+            .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+            .background { highlight(selected, cornerRadius: cornerRadius) }
+            .opacity(dimmed(selected))
+            .animation(.easeOut(duration: 0.16), value: search.launching)
+            .contentShape(Rectangle()) // hit-testing covers the row, not just the text
+            .id(model.id)
+            .onTapGesture { search.selection = model.id; activate() }
     }
 
     private func row(model: RowModel) -> some View {
         let selected = model.id == search.selection
-        return HStack(spacing: 12) {
+        let content = HStack(spacing: 12) {
             icon(model.icon, size: 30, selected: selected)
             VStack(alignment: .leading, spacing: 1) {
                 Text(model.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
-                Text(model.subtitle).font(.system(size: 11)).lineLimit(1)
+                // Prettified here, for the handful of rows on screen, rather than for
+                // every hit in the list.
+                Text(model.subtitle ?? model.path.map { prettyPath($0) } ?? "")
+                    .font(.system(size: 11)).lineLimit(1)
                     .foregroundStyle(selected ? AnyShapeStyle(.white.opacity(0.75)) : AnyShapeStyle(.secondary))
             }
             Spacer(minLength: 0)
         }
-        .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
         .padding(.horizontal, 12)
         .frame(height: Self.rowHeight - 2)
-        .background { highlight(selected, cornerRadius: 10) }
-        .opacity(dimmed(selected))
-        .animation(.easeOut(duration: 0.16), value: search.launching)
-        .contentShape(Rectangle()) // hit-testing covers the row, not just the text
-        .id(model.id)
-        .onTapGesture { search.selection = model.id; activate() }
+        return selectable(content, model, selected: selected, cornerRadius: 10)
     }
 
     // MARK: Actions
@@ -624,10 +650,16 @@ struct RootView: View {
                 NSWorkspace.shared.open(url)
             }
         } else if let hit = search.selectedHit {
+            // Already on its way: a second Return inside the animation window would
+            // otherwise queue a second launch of the same app.
+            guard search.launching == nil else { return }
             search.record(hit)
             search.launching = hit.id
-            // Let the flood play, then launch and dismiss.
+            // Let the pop play, then launch and dismiss.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.19) {
+                // Esc or a click outside during those 190 ms runs reset(), which clears
+                // this — and then the app must not be launched after all.
+                guard search.launching == hit.id else { return }
                 NSWorkspace.shared.open(hit.url)
                 onClose()
             }

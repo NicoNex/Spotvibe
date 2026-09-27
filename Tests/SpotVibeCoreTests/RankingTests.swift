@@ -23,10 +23,20 @@ private func scratchURL() -> URL {
         .appendingPathComponent("spotvibe-test-\(UUID().uuidString).json")
 }
 
-/// A Search that never touches Spotlight: a fixed app list, no warm-up query.
+/// An isolated store, or a suite would read and rewrite the real preferences.
+private func scratchDefaults() -> UserDefaults {
+    let name = "spotvibe.tests.\(UUID().uuidString)"
+    let store = UserDefaults(suiteName: name)!
+    store.removePersistentDomain(forName: name)
+    return store
+}
+
+/// A Search that never touches Spotlight or the real preferences: a fixed app list, no
+/// warm-up query, a scratch store.
 @MainActor
-private func makeSearch(apps: [Hit], frecency: Frecency) -> Search {
-    Search(frecency: frecency, apps: apps, warm: false)
+private func makeSearch(apps: [Hit], frecency: Frecency = Frecency(url: scratchURL())) -> Search {
+    Search(frecency: frecency, apps: apps, warm: false,
+           settings: Preferences(store: scratchDefaults()))
 }
 
 // Index wrapping --------------------------------------------------------------
@@ -204,6 +214,30 @@ struct SearchTests {
         #expect(search.recentCount == 0)
     }
 
+    @Test("files used more than any app do not starve the shelf")
+    func shelfSkipsFiles() {
+        let frecency = Frecency(url: scratchURL())
+        for n in 0..<Search.recentLimit {
+            for _ in 0..<3 { frecency.record(query: "", path: "/Users/me/doc\(n).txt") }
+        }
+        frecency.record(query: "", path: "/Applications/Safari.app")
+        let search = makeSearch(apps: apps, frecency: frecency)
+        #expect(search.recentCount == 1)
+        #expect(search.hits.first?.name == "Safari")
+    }
+
+    @Test("turning recents off drops the shelf on refresh")
+    func recentsToggle() {
+        let frecency = Frecency(url: scratchURL())
+        frecency.record(query: "", path: "/Applications/Safari.app")
+        let search = makeSearch(apps: apps, frecency: frecency)
+        #expect(search.recentCount == 1)
+        search.settings.showRecents = false
+        search.refresh()
+        #expect(search.recentCount == 0)
+        #expect(search.hits.count == apps.count)
+    }
+
     @Test("utilities leave the browse grid, but rank as plain apps once a term is typed")
     func utilitiesOnlySplitWhileBrowsing() {
         let mixed = [utility("Console"), app("Calendar"), utility("Calculator")]
@@ -293,9 +327,7 @@ struct SearchTests {
 
 @Suite("Noise filtering")
 struct NoiseTests {
-    private func isNoisy(_ path: String) -> Bool {
-        Search.noisyPathFragments.contains { path.contains($0) }
-    }
+    private func isNoisy(_ path: String) -> Bool { Search.isNoisy(path) }
 
     @Test("developer and library clutter is excluded")
     func excluded() {
@@ -326,17 +358,9 @@ struct NoiseTests {
 
 @Suite("Hot-key recording")
 struct RecordingTests {
-    /// An isolated store, or the suite would read and rewrite the real preferences.
-    private func scratch() -> UserDefaults {
-        let name = "spotvibe.tests.\(UUID().uuidString)"
-        let store = UserDefaults(suiteName: name)!
-        store.removePersistentDomain(forName: name)
-        return store
-    }
-
     @Test("recording is announced, so the controller can let go of the chord")
     func announced() {
-        let settings = Preferences(store: scratch())
+        let settings = Preferences(store: scratchDefaults())
         var seen: [Bool] = []
         settings.onRecordingChanged = { seen.append($0) }
 

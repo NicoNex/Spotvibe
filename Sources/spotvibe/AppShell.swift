@@ -56,20 +56,6 @@ private func releaseHotKey() {
     hotKeyRef = nil
 }
 
-func trace(_ message: String) {
-    guard let path = ProcessInfo.processInfo.environment["SPOTVIBE_TRACE"] else { return }
-    let line = message + "\n"
-    if path == "1" {
-        FileHandle.standardError.write(line.data(using: .utf8)!)
-        return
-    }
-    if let handle = FileHandle(forWritingAtPath: path) {
-        handle.seekToEndOfFile()
-        handle.write(line.data(using: .utf8)!)
-        try? handle.close()
-    }
-}
-
 // MARK: - Controller
 
 final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -77,10 +63,17 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var search = Search(settings: preferences)
     private var panel: Panel!
     private var status: NSStatusItem!
-    /// The top edge of the screen, notch included — the window is pinned to it.
-    private var screenTop: CGFloat = 0
 
     func applicationDidFinishLaunching(_: Notification) {
+        // FIRST, before anything touches `search`. That property is lazy, and reading it
+        // walks three application directories asking LaunchServices for a localized name
+        // per bundle — several hundred milliseconds during which ⌥Space did nothing at all.
+        // The handler cannot fire while we are still inside this method, so registering
+        // here costs nothing and makes the chord live as early as it can be.
+        status = makeStatusItem(hotKeyOK: bindHotKey())
+        preferences.onHotKeyChanged = { [weak self] in self?.syncHotKey() }
+        preferences.onRecordingChanged = { [weak self] _ in self?.syncHotKey() }
+
         panel = Panel(contentRect: NSRect(origin: .zero, size: RootView.panelSize),
                       styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
                       backing: .buffered, defer: false)
@@ -107,24 +100,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         host.view.setValue(NSColor.clear, forKey: "backgroundColor")
         panel.contentViewController = host
 
-        status = makeStatusItem(hotKeyOK: bindHotKey())
-        // Rebinding from the settings screen re-registers and re-labels the menu item, so a
-        // chord that is already taken is reported the moment it is chosen.
-        preferences.onHotKeyChanged = { [weak self] in
-            guard let self else { return }
-            // Binding is deferred while recording: taking the chord back mid-recording would
-            // mean the next key press never arrives. The end of the recording binds it.
-            let ok = preferences.recording ? true : bindHotKey()
-            status.menu?.items.first?.title = Self.hotKeyMenuTitle(ok: ok,
-                                                                  label: preferences.hotKeyLabel)
-        }
-        preferences.onRecordingChanged = { [weak self] recording in
-            guard let self else { return }
-            if recording { releaseHotKey(); return }
-            status.menu?.items.first?.title = Self.hotKeyMenuTitle(ok: bindHotKey(),
-                                                                  label: preferences.hotKeyLabel)
-        }
         preferences.onScopeChanged = { [weak self] in self?.search.rescope() }
+        preferences.onRecentsChanged = { [weak self] in self?.search.refresh() }
 
         if let demo = ProcessInfo.processInfo.environment["SPOTVIBE_DEMO"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
@@ -135,6 +112,17 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 else if demo != "1" { self?.search.text = demo }
             }
         }
+    }
+
+    /// The single authority on who holds the chord and what the menu says about it.
+    /// Both the hotkey change and the recording change route here, so "do not hold the
+    /// chord while the settings are listening for one" is stated once, in the place that
+    /// holds it — rather than as a rebind skipped in one callback and a label rewritten in
+    /// both, which is what it was.
+    private func syncHotKey() {
+        if preferences.recording { releaseHotKey(); return }
+        status.menu?.items.first?.title = Self.hotKeyMenuTitle(ok: bindHotKey(),
+                                                               label: preferences.hotKeyLabel)
     }
 
     private func bindHotKey() -> Bool {
@@ -176,10 +164,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // frame, not visibleFrame: the window has to reach the physical top of the display,
         // where the notch is, and the panel's level is above the menu bar anyway.
         guard let full = screen?.frame else { return }
-        screenTop = full.maxY
 
         search.opened = false
-        reposition()
+        reposition(on: full)
         panel.alphaValue = 0
         // Order in and take key WHILE THE CONTENT IS STILL SMALL. Making a window key runs
         // AppKit's key-view search over the hosting view, and with the results grid already
@@ -188,7 +175,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
         search.expanded = true
-        search.focusToken += 1
         search.visible = true
 
         NSAnimationContext.runAnimationGroup { context in
@@ -203,16 +189,18 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { self.search.opened = true }
     }
 
-    /// Pinned to the top edge of the screen, so the window itself never has to move: the
-    /// panel is laid out at a fixed inset inside it.
-    private func reposition() {
-        guard let full = panel.screen?.frame ?? NSScreen.main?.frame else { return }
+    /// Pinned to the top edge of the screen the pointer is on, so the window itself never
+    /// has to move: the panel is laid out at a fixed inset inside it.
+    ///
+    /// Takes the frame rather than looking one up. Deriving it from `panel.screen` undid
+    /// the work `show` does to pick the right display: the panel is offscreen before the
+    /// first show, so `panel.screen` is nil and the fallback is `NSScreen.main` — which,
+    /// while another app is frontmost, is that app's display. On two screens the panel got
+    /// one display's centre and the other's top edge.
+    private func reposition(on full: NSRect) {
         let size = panel.frame.size
-        let top = screenTop == 0 ? full.maxY : screenTop
-        panel.setFrameOrigin(NSPoint(x: full.midX - size.width / 2, y: top - size.height))
+        panel.setFrameOrigin(NSPoint(x: full.midX - size.width / 2, y: full.maxY - size.height))
     }
-
-    func windowDidResize(_: Notification) { reposition() }
 
     func hide() {
         guard panel.isVisible, search.visible else { return }

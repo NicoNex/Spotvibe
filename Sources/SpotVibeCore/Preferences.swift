@@ -62,15 +62,20 @@ public final class Preferences {
 
     public init(store: UserDefaults = .standard) {
         self.store = store
-        thickness = Thickness(rawValue: store.string(forKey: Key.thickness) ?? "") ?? .medium
-        scope = Scope(rawValue: store.string(forKey: Key.scope) ?? "") ?? .home
-        engine = Engine(rawValue: store.string(forKey: Key.engine) ?? "") ?? .duckduckgo
+        thickness = Self.stored(store, Key.thickness, or: .medium)
+        scope = Self.stored(store, Key.scope, or: .home)
+        engine = Self.stored(store, Key.engine, or: .duckduckgo)
         showRecents = store.object(forKey: Key.showRecents) as? Bool ?? true
         // 49 is kVK_Space and 2048 is Carbon's optionKey — spelled as numbers because
         // Carbon.HIToolbox is not available to this module.
         hotKeyCode = store.object(forKey: Key.hotKeyCode) as? UInt32 ?? 49
         hotKeyModifiers = store.object(forKey: Key.hotKeyModifiers) as? UInt32 ?? 2048
         hotKeyLabel = store.string(forKey: Key.hotKeyLabel) ?? "⌥Space"
+    }
+
+    private static func stored<T: RawRepresentable>(_ store: UserDefaults, _ key: String,
+                                                    or fallback: T) -> T where T.RawValue == String {
+        T(rawValue: store.string(forKey: key) ?? "") ?? fallback
     }
 
     private enum Key {
@@ -85,7 +90,15 @@ public final class Preferences {
 
     public var thickness: Thickness { didSet { store.set(thickness.rawValue, forKey: Key.thickness) } }
     public var engine: Engine { didSet { store.set(engine.rawValue, forKey: Key.engine) } }
-    public var showRecents: Bool { didSet { store.set(showRecents, forKey: Key.showRecents) } }
+    /// Announced like the scope is: the shelf is built inside the search's rebuild, so
+    /// without telling it, turning this off changed nothing until the panel was next
+    /// opened — the row stayed on screen and kept shifting every index behind it.
+    public var showRecents: Bool {
+        didSet {
+            store.set(showRecents, forKey: Key.showRecents)
+            onRecentsChanged?()
+        }
+    }
 
     /// Changing the scope invalidates whatever the live query was gathering, so the search
     /// has to be told rather than picking it up on the next keystroke.
@@ -116,6 +129,7 @@ public final class Preferences {
 
     public var onHotKeyChanged: (() -> Void)?
     public var onScopeChanged: (() -> Void)?
+    public var onRecentsChanged: (() -> Void)?
     public var onRecordingChanged: ((Bool) -> Void)?
 
     /// Both halves land together, so the handler runs once with a consistent pair.

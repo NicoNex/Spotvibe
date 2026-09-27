@@ -23,12 +23,22 @@ w=$(( panel + margin * 2 ))
 swift build >/dev/null
 binary="$root/.build/debug/spotvibe"
 
+# Armed BEFORE the backdrop starts: a Ctrl-C in the window between launching it and
+# arming the trap would leave a borderless full-screen window on every display, owned by
+# an agent app with no Dock icon and no way to close it but a terminal.
+backdrop=""
+cleanup() {
+    # `|| true` on both: under `set -e` a pkill that finds nothing left to kill would
+    # abort the trap and fail the whole run after every shot was already written.
+    if [ -n "$backdrop" ]; then kill "$backdrop" 2>/dev/null || true; fi
+    pkill -f '\.build/debug/spotvibe' 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
 swift "$root/Tools/backdrop.swift" &
 backdrop=$!
 # The backdrop must be up before the panel, or the first shot catches the desktop.
 sleep 2.5
-cleanup() { kill "$backdrop" 2>/dev/null || true; pkill -f '\.build/debug/spotvibe' 2>/dev/null || true; }
-trap cleanup EXIT
 
 # name | SPOTVIBE_DEMO | top | height — the panel's glass starts 188pt down the screen.
 shots=(

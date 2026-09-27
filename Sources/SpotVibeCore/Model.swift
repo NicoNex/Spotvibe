@@ -14,6 +14,9 @@ public struct Hit: Identifiable, Hashable {
         self.id = id
         self.name = name
         self.used = used
+        // Derived once here, not per call: `matches` runs over every app on every
+        // keystroke, and computing it there cost two NSString bridges a time.
+        fileName = ((id as NSString).lastPathComponent as NSString).deletingPathExtension
     }
 
     public let id: String // absolute path
@@ -21,14 +24,13 @@ public struct Hit: Identifiable, Hashable {
     /// When the file was last opened, as Spotlight recorded it. Nil for apps, which rank
     /// on the frecency this app learned itself rather than on the system's account.
     public let used: Date?
-    public var url: URL { URL(fileURLWithPath: id) }
-    public var isApp: Bool { id.hasSuffix(".app") }
+    /// `isDirectory` spelled out: the one-argument initialiser stats the path to decide,
+    /// and this is called per launch, not per frame, but there is no reason to pay it.
+    public var url: URL { URL(fileURLWithPath: id, isDirectory: false) }
     /// The name on disk, under whatever the system chose to display. On an Italian Mac
     /// Calendar.app shows as "Calendario", and someone typing "calendar" still has to find
     /// it — so both names are matched.
-    public var fileName: String {
-        ((id as NSString).lastPathComponent as NSString).deletingPathExtension
-    }
+    public let fileName: String
 
     public func matches(_ term: String) -> Bool {
         name.localizedCaseInsensitiveContains(term) || fileName.localizedCaseInsensitiveContains(term)

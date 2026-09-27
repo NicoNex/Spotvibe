@@ -119,7 +119,7 @@ un-hit-testable.
 ## Develop
 
 ```bash
-make run          # debug build, launched in the foreground with trace output
+make run          # debug build, launched in the foreground with query timings
 make run DEMO=cal # ...with a term already typed
 make test         # swift-testing suite
 make icon         # redraw the icon from Tools/icon.py (needs librsvg)
