@@ -237,9 +237,24 @@ struct RootView: View {
     /// so it inverts with the appearance, and `strokeBorder` so the line sits inside the
     /// shape instead of straddling it. An overlay composites above the glass — it does not
     /// filter the subtree, so the backdrop sampling underneath is untouched.
+    ///
+    /// Over it, the specular edge: brightest along the top where the light is, fading down
+    /// the sides and catching again at the bottom lip. That line is most of what makes a
+    /// slab read as a thick piece of glass rather than a frosted card.
     private func rim(_ shape: RoundedRectangle) -> some View {
         shape.strokeBorder(.primary.opacity(0.10), lineWidth: 0.5)
+            .overlay {
+                shape.strokeBorder(Self.specular, lineWidth: 1)
+                    .opacity(search.reduceTransparency ? 0 : 1)
+            }
     }
+
+    private static let specular = LinearGradient(
+        stops: [.init(color: .white.opacity(0.60), location: 0),
+                .init(color: .white.opacity(0.08), location: 0.35),
+                .init(color: .white.opacity(0.06), location: 0.8),
+                .init(color: .white.opacity(0.28), location: 1)],
+        startPoint: .top, endPoint: .bottom)
 
     /// The one way a slab is dressed, in the one order that works: clipped BEFORE the glass
     /// (after it, the clip would rasterise the glass layer offscreen and cost the backdrop
@@ -413,7 +428,7 @@ struct RootView: View {
                 .foregroundStyle(.secondary)
             TextField(loc("Search apps and files"), text: query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 19, weight: .regular))
+                .font(.system(size: 20, weight: .light))
                 .foregroundStyle(.primary)
                 .focused(_focused.projectedValue)
                 .onSubmit(activate)
@@ -511,15 +526,20 @@ struct RootView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    // No visible titles over the two grids: a shelf of three over a wall of
+                    // apps says what each is, and the luminous rule between them does the
+                    // dividing. The names stay for VoiceOver.
                     if !recentRows.isEmpty {
-                        header(loc("Recent"))
                         grid(recentRows)
+                            .accessibilityElement(children: .contain)
+                            .accessibilityLabel(loc("Recent"))
                     }
                     if !appRows.isEmpty {
                         if !recentRows.isEmpty { separator }
-                        header(loc("Applications"))
                         grid(appRows)
                             .padding(.bottom, 10)
+                            .accessibilityElement(children: .contain)
+                            .accessibilityLabel(loc("Applications"))
                     }
                     if !listRows.isEmpty {
                         if !recentRows.isEmpty || !appRows.isEmpty { separator }
@@ -534,7 +554,7 @@ struct RootView: View {
                         .padding(.bottom, 8)
                     }
                 }
-                .padding(.top, 4)
+                .padding(.top, Self.topPad)
             }
             .scrollIndicators(.never)
             .scrollBounceBehavior(.basedOnSize)
@@ -547,18 +567,18 @@ struct RootView: View {
 
     /// Snapped to whole rows and whole grid lines, so neither section ends half-drawn.
     private var resultsHeight: CGFloat {
-        var height: CGFloat = 4
+        var height = Self.topPad
         // Every section but the first is preceded by a separator, so this tracks whether
         // one has already been drawn.
         var following = false
         if search.recentCount > 0 {
-            height += Self.headerHeight + Self.cellHeight - Self.cellGap // always one row
+            height += Self.cellHeight - Self.cellGap // always one row
             following = true
         }
         if appGridCount > 0 {
             if following { height += Self.separatorBlock }
             let lines = (appGridCount + Self.columns - 1) / Self.columns
-            height += Self.headerHeight + CGFloat(min(lines, 4)) * Self.cellHeight + 10 - Self.cellGap
+            height += CGFloat(min(lines, 4)) * Self.cellHeight + 10 - Self.cellGap
             following = true
         }
         if listCount > 0 {
@@ -570,14 +590,18 @@ struct RootView: View {
     }
 
     private static let headerHeight: CGFloat = 26
+    private static let topPad: CGFloat = 12
     /// The rule plus the padding around it, which `resultsHeight` has to account for.
     private static let separatorBlock: CGFloat = 13
 
-    /// A hairline between sections, not a hard rule: the panel is one surface.
+    /// A hairline between sections, not a hard rule: the panel is one surface. Faded at
+    /// both ends, so it reads as light caught inside the glass rather than a line on it.
     private var separator: some View {
-        Divider()
-            .opacity(0.6)
-            .padding(.horizontal, 18)
+        Rectangle()
+            .fill(LinearGradient(colors: [.clear, .primary.opacity(0.22), .clear],
+                                 startPoint: .leading, endPoint: .trailing))
+            .frame(height: 1)
+            .padding(.horizontal, 28)
             .padding(.top, 10)
             .padding(.bottom, 2)
     }
@@ -599,15 +623,32 @@ struct RootView: View {
         launching && !selected ? 0.3 : 1
     }
 
-    /// One highlight rect shared through the namespace, so moving the selection slides it.
+    /// The selection is a lens: a lighter, brighter pane of the same glass, lifted a
+    /// little off the slab, with the writing on it left as it was. A block of accent colour
+    /// sat ON the glass like a sticker. Reduce Transparency keeps the solid accent — with
+    /// the glass gone there is nothing for a lens to be made of.
+    private var lens: Bool { !search.reduceTransparency }
+
+    /// One highlight shared through the namespace, so moving the selection slides it.
     @ViewBuilder
     private func highlight(_ selected: Bool, cornerRadius: CGFloat) -> some View {
         if selected {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(accent)
-                .matchedGeometryEffect(id: "selection", in: _ns.wrappedValue)
+            let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            Group {
+                if lens {
+                    shape.fill(.white.opacity(0.22))
+                        .overlay { shape.strokeBorder(Self.specular, lineWidth: 1) }
+                        .shadow(color: .black.opacity(0.14), radius: 10, y: 5)
+                } else {
+                    shape.fill(accent)
+                }
+            }
+            .matchedGeometryEffect(id: "selection", in: _ns.wrappedValue)
         }
     }
+
+    /// White on the accent block; on the lens the writing keeps its own colour.
+    private func onHighlight(_ selected: Bool) -> Bool { selected && !lens }
 
     @ViewBuilder
     private func icon(_ icon: RowIcon, size: CGFloat, selected: Bool) -> some View {
@@ -619,11 +660,11 @@ struct RootView: View {
             Image(systemName: name)
                 .font(.system(size: size * 0.66))
                 .frame(width: size, height: size)
-                .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(accent))
+                .foregroundStyle(onHighlight(selected) ? AnyShapeStyle(.white) : AnyShapeStyle(accent))
         }
     }
 
-    // ponytail: the selection highlight is a plain tinted rect, NOT glass. Glass cannot
+    // ponytail: the selection lens is a translucent fill, NOT glass. Glass cannot
     // sample glass, so nesting a second glass layer inside the slab renders wrong.
     private func cell(model: RowModel) -> some View {
         let selected = model.id == search.selection
@@ -648,7 +689,7 @@ struct RootView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(width: Self.cellWidth - 10, height: Self.cellHeight - Self.cellGap)
-        return selectable(content, model, selected: selected, cornerRadius: 14)
+        return selectable(content, model, selected: selected, cornerRadius: 26)
     }
 
     /// What a grid cell and a list row have in common once laid out: the colour that
@@ -657,7 +698,7 @@ struct RootView: View {
     private func selectable<V: View>(_ content: V, _ model: RowModel, selected: Bool,
                                      cornerRadius: CGFloat) -> some View {
         content
-            .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+            .foregroundStyle(onHighlight(selected) ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
             .background { highlight(selected, cornerRadius: cornerRadius) }
             .opacity(dimmed(selected))
             .animation(.easeOut(duration: 0.16), value: search.launching)
@@ -676,13 +717,14 @@ struct RootView: View {
                 // every hit in the list.
                 Text(model.subtitle ?? model.path.map { prettyPath($0) } ?? "")
                     .font(.system(size: 11)).lineLimit(1)
-                    .foregroundStyle(selected ? AnyShapeStyle(.white.opacity(0.75)) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(onHighlight(selected) ? AnyShapeStyle(.white.opacity(0.75))
+                                                           : AnyShapeStyle(.secondary))
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
         .frame(height: Self.rowHeight - 2)
-        return selectable(content, model, selected: selected, cornerRadius: 10)
+        return selectable(content, model, selected: selected, cornerRadius: 16)
     }
 
     // MARK: Actions
