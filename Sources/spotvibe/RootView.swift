@@ -736,6 +736,17 @@ struct RootView: View {
         return .handled
     }
 
+    /// An app is LAUNCHED, not opened as an item. Through `open(_:)` the bundle is handled
+    /// like any document, and on the way LaunchServices, inside this process, tries to
+    /// write into it — most likely the last-used metadata Finder keeps on opened items.
+    /// For a bundle the user owns (Prism Launcher) that is a write into another app, and
+    /// macOS stops it with "SpotVibe was prevented from modifying apps on your Mac".
+    /// Seen in the TCC log before the target process had even started; gone with this.
+    private func open(_ url: URL) {
+        guard url.pathExtension == "app" else { NSWorkspace.shared.open(url); return }
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+    }
+
     private func activate() {
         guard search.rowCount > 0 else { return }
         if search.webRowSelected {
@@ -755,7 +766,7 @@ struct RootView: View {
                 // Esc or a click outside during those 190 ms runs reset(), which clears
                 // this — and then the app must not be launched after all.
                 guard search.launching == hit.id else { return }
-                NSWorkspace.shared.open(hit.url)
+                open(hit.url)
                 onClose()
             }
             return
