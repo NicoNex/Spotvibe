@@ -18,6 +18,13 @@ import pathlib
 # curvature has to fall to zero where the corner meets the straight edge.
 SIDE, RADIUS, N = 1024, 229, 5
 
+# macOS 26 only shows an icon as-is when its silhouette IS the system squircle on
+# Apple's grid: an 824pt body centred in the 1024 canvas, 100pt clear all round. Drawn
+# full-bleed, the tile fails that check and the Finder and Dock put it on a grey plate
+# of their own. So the art is drawn at SIDE and shrunk onto the grid as a whole.
+BODY = 824
+INSET = (SIDE - BODY) / 2
+
 
 def squircle(x, y, w, h, r, steps=16):
     pts = []
@@ -77,6 +84,7 @@ SVG = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {SIDE} {SIDE}" wi
     <clipPath id="lens"><circle cx="{LENS_X}" cy="{LENS_Y}" r="{LENS_R}"/></clipPath>
   </defs>
 
+  <g transform="translate({INSET} {INSET}) scale({BODY / SIDE})">
   <path d="{TILE}" fill="url(#bg)"/>
   <g clip-path="url(#tile)">
     <!-- the grid as it lies, dimmed: what the lens is looking at -->
@@ -94,6 +102,7 @@ SVG = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {SIDE} {SIDE}" wi
   </g>
   <path d="{TILE}" fill="url(#sheen)"/>
   <path d="{TILE}" fill="none" stroke="#ffffff" stroke-opacity=".16" stroke-width="3"/>
+  </g>
 </svg>
 '''
 

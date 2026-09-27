@@ -40,8 +40,8 @@ SpotVibe does one job: open what is already on your Mac.
 Requires **macOS 26 (Tahoe) or later** and the macOS 26 SDK. Apple Silicon and Intel.
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/spotvibe.git
-cd spotvibe
+git clone https://github.com/NicoNex/Spotvibe.git
+cd Spotvibe
 make app && cp -R dist/SpotVibe.app /Applications/
 open /Applications/SpotVibe.app
 ```
