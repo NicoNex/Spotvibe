@@ -148,7 +148,13 @@ struct RootView: View {
     /// `withAnimation` at the mutation site rather than `.animation(value:)` on the
     /// container — though the real lesson was harder won: see the comment in `body` about
     /// never adding or removing a glass element while an animation is running.
-    static let morphSpring = Animation.spring(response: 0.46, dampingFraction: 0.80)
+    static let morphSpring = paced(.spring(response: 0.46, dampingFraction: 0.80))
+
+    /// `SPOTVIBE_SLOWMO=5` plays the morph five times slower. There is no system slow-motion
+    /// switch for SwiftUI on the Mac, and a morph this fast cannot be judged — or captured
+    /// frame by frame — at full speed.
+    static let slowMo = Double(ProcessInfo.processInfo.environment["SPOTVIBE_SLOWMO"] ?? "") ?? 1
+    static func paced(_ animation: Animation) -> Animation { animation.speed(1 / slowMo) }
 
     private func showSettings(_ open: Bool) {
         withAnimation(Self.morphSpring) { search.showingSettings = open }
@@ -167,20 +173,63 @@ struct RootView: View {
         Self.fieldHeight * scale + (search.showingSettings ? 0 : Self.gap)
     }
 
-    /// One id per element while they are separate pieces, one id SHARED while the settings
-    /// are open: `glassEffectUnion` merges everything carrying the same id into a single
-    /// continuous surface, so the bar, the gear and the panel stop being three bodies of
-    /// glass that happen to touch and become one that the morph then reshapes.
+    /// The container's merge distance, animated on its OWN clock rather than the morph's.
+    /// This is what makes the pieces read as liquid: glass closer than this flows together
+    /// with a bridge between, and the bridge snaps the moment the gap outgrows it.
+    ///
+    /// Going in it rises WITH the morph, staying a little ahead of the closing gaps, so
+    /// each pair throws out a neck just before it touches. Raised all at once instead, it
+    /// passed the 26 between bar and results on the first frame and the whole screen fused
+    /// into one blob before anything had moved. Coming out it holds high and only drains at the end
+    /// — the bar, the gear and the results pull apart with necks of glass still stretched
+    /// between them, which break one by one as each gap passes the falling distance (the
+    /// results, 26 away, let go before the gear, 12 away). At rest it is back under 12, so
+    /// the field and the gear sit as two separate drops.
+    ///
+    private var _liquid = State(initialValue: Self.restSpacing)
+    private var liquid: CGFloat {
+        get { _liquid.wrappedValue }
+        nonmutating set { _liquid.wrappedValue = newValue }
+    }
+    private static let restSpacing: CGFloat = 8
+    private static let mergedSpacing: CGFloat = 34
+
+    /// The gear and the results share one union id for the length of the way IN, and
+    /// only then. Joining the union is what animates the glass going in: without it the
+    /// settings panel arrived at full size on the first frame. But leaving it, animated or
+    /// not, spawned the results slab as a droplet rising off the bottom of the panel on the
+    /// way out. So the union is let go once the panel has settled — while everything still
+    /// overlaps, the results are zero high and the merge distance holds it all as one
+    /// piece, so letting go changes nothing on screen — and the way out never has one.
+    /// The field is never in it: in it, its glass stopped being drawn and the bar blinked.
+    private var _fusing = State(initialValue: false)
+    private var fusing: Bool {
+        get { _fusing.wrappedValue }
+        nonmutating set { _fusing.wrappedValue = newValue }
+    }
     private func unionID(_ own: String) -> String {
-        search.showingSettings ? "panel" : own
+        search.showingSettings && fusing ? "panel" : own
+    }
+
+    private func pour(_ open: Bool) {
+        if open {
+            withAnimation(Self.morphSpring) { fusing = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9 * Self.slowMo) {
+                withTransaction(Transaction(animation: nil)) { fusing = false }
+            }
+        }
+        withAnimation(open ? Self.paced(.easeInOut(duration: 0.40))
+                           : Self.paced(.easeIn(duration: 0.75))) {
+            liquid = open ? Self.mergedSpacing : Self.restSpacing
+        }
     }
 
     /// The glass takes its time; the writing on it does not. Left on the morph's own spring
     /// the two sets of text are both legible for a third of a second and read as one page
     /// printed twice. Out fast, in after a beat, and they never share the slab.
     private static let contentFade = AnyTransition.asymmetric(
-        insertion: .opacity.animation(.easeIn(duration: 0.16).delay(0.13)),
-        removal: .opacity.animation(.easeOut(duration: 0.10))
+        insertion: .opacity.animation(paced(.easeIn(duration: 0.16).delay(0.13))),
+        removal: .opacity.animation(paced(.easeOut(duration: 0.10)))
     )
 
     /// A hairline just inside the rim. The glass draws its own edge, but over a busy or
@@ -217,10 +266,9 @@ struct RootView: View {
 
             // Spacing is the MERGE distance, not padding: two glass elements closer together
             // than this stop being two shapes and flow into one, the way two drops touching
-            // do. At rest the field and the gear sit 12 apart and stay separate; opening the
-            // settings closes that gap to 0 while the radius goes up, so they fuse on the
-            // way and the panel arrives as a single slab.
-            GlassEffectContainer(spacing: search.showingSettings ? 32 : 8) {
+            // do. At rest it is under the 12 between the field and the gear, so they sit
+            // apart; `liquid` animates it on its own clock during the morph — see there.
+            GlassEffectContainer(spacing: liquid) {
                 // A ZStack and not a VStack, with the results pinned at a FIXED offset. In a
                 // stack the growing settings panel pushes whatever is under it down the
                 // screen, so the grid slid out of the bottom of the panel while it faded —
@@ -235,13 +283,19 @@ struct RootView: View {
                             // out immediately, or it stays readable under the settings
                             // panel that is growing over the same space.
                             .opacity(search.showingSettings ? 0 : 1)
-                            .animation(.easeOut(duration: 0.10), value: search.showingSettings)
+                            .animation(Self.paced(.easeOut(duration: 0.10)), value: search.showingSettings)
                             .frame(width: Self.panelWidth * scale, height: lowerHeight * scale,
                                    alignment: .top),
                              in: listShape)
                             .glassEffectID("results", in: _ns.wrappedValue)
                             .glassEffectUnion(id: unionID("results"), namespace: _ns.wrappedValue)
                             .padding(.top, lowerOffset)
+                            // On the way out, a beat behind the panel: the panel retracts
+                            // first and the results then drip out of its lower edge, instead
+                            // of already lying there when the panel pulls back off them.
+                            .animation(Self.paced(.spring(response: 0.5, dampingFraction: 0.78)
+                                .delay(search.showingSettings ? 0 : 0.10)),
+                                       value: search.showingSettings)
                     }
 
                     // NO glass element is ever added or removed here. One that goes away
@@ -255,7 +309,7 @@ struct RootView: View {
                     // so it retreated to the right and vanished into the gear — the bar
                     // leaving, not the two of them joining. Here the bar does not move at
                     // all: it keeps its size and place, and the panel grows leftwards over
-                    // it. Where they overlap, the union makes them one body of glass rather
+                    // it. Where they overlap, the merge distance makes them one body of glass rather
                     // than two stacked layers, which is the thing that reads as liquid.
                     ZStack(alignment: .topLeading) {
                         slab(field
@@ -264,26 +318,23 @@ struct RootView: View {
                             .opacity(search.showingSettings ? 0 : 1)
                             // Out fast, for the same reason the results are: the placeholder
                             // would otherwise still be legible across the settings title.
-                            .animation(.easeOut(duration: 0.10), value: search.showingSettings)
+                            .animation(Self.paced(.easeOut(duration: 0.10)), value: search.showingSettings)
                             .frame(width: fieldWidthNow, height: morphHeight)
                             // A beat behind the gear. Both bodies end on the same rectangle,
                             // and the bar has almost no width left to gain, so on the same
                             // curve it arrives first and the circle is left trailing after
                             // it as a dot. Delayed, the order reads the way the press did:
                             // the button opens, and the bar runs in after it.
-                            .animation(Self.morphSpring.delay(0.09), value: search.showingSettings),
+                            .animation(Self.paced(.spring(response: 0.46, dampingFraction: 0.80).delay(0.09)), value: search.showingSettings),
                              in: morphShape)
                             .glassEffectID("field", in: _ns.wrappedValue)
-                            // The bar stays OUT of the union. Put into it, its own body of
-                            // glass stopped being drawn the instant the id changed and the
-                            // bar simply blinked out; left out of it, it keeps its capsule
-                            // and the container's merge distance flows it into the panel as
-                            // the panel arrives over it.
-                            .glassEffectUnion(id: "field", namespace: _ns.wrappedValue)
 
                         slab(gearSlab.frame(width: gearWidth, height: morphHeight), in: morphShape)
                             .glassEffectID("gear", in: _ns.wrappedValue)
                             .glassEffectUnion(id: unionID("gear"), namespace: _ns.wrappedValue)
+                            // Its own curve, like the other two, instead of whatever
+                            // transaction the change arrived in.
+                            .animation(Self.morphSpring, value: search.showingSettings)
                             // Pinned to the right edge of the panel, so the circle stays
                             // exactly where it was pressed and every new pixel it gains
                             // appears on its left, running across the bar.
@@ -304,6 +355,8 @@ struct RootView: View {
         // offscreen stops sampling the live backdrop — it degrades to a flat blur with no
         // rim refraction. Present and dismiss are animated on the NSPanel, in AppShell.
         .onAppear { focused = true }
+        // Here rather than in showSettings, so Esc, the gear and the demo all pour the same.
+        .onChange(of: search.showingSettings) { _, open in pour(open) }
         // The hosting view outlives every hide, so re-show has to re-assert focus itself.
         // `visible` goes false on every hide, so each show is a change even mid-fade.
         .onChange(of: search.visible) { _, shown in if shown { focused = true } }

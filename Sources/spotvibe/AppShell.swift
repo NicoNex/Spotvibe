@@ -109,8 +109,21 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // `SPOTVIBE_DEMO=settings` opens straight onto the settings screen; any
                 // other value is typed into the field.
                 if demo == "settings" { self?.search.showingSettings = true }
+                else if demo == "morph" { self?.cycleSettings() }
                 else if demo != "1" { self?.search.text = demo }
             }
+        }
+    }
+
+    /// `SPOTVIBE_DEMO=morph`: into the settings and back out, once each way, hands off —
+    /// so the morph can be recorded (pair with SPOTVIBE_SLOWMO to see every frame of it).
+    private func cycleSettings() {
+        let hold = 1.2 * RootView.slowMo
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            withAnimation(RootView.morphSpring) { self.search.showingSettings = true }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8 + hold) {
+            withAnimation(RootView.morphSpring) { self.search.showingSettings = false }
         }
     }
 
