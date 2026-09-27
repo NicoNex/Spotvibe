@@ -185,7 +185,6 @@ struct RootView: View {
     /// between them, which break one by one as each gap passes the falling distance (the
     /// results, 26 away, let go before the gear, 12 away). At rest it is back under 12, so
     /// the field and the gear sit as two separate drops.
-    ///
     private var _liquid = State(initialValue: Self.restSpacing)
     private var liquid: CGFloat {
         get { _liquid.wrappedValue }
@@ -211,7 +210,23 @@ struct RootView: View {
         search.showingSettings && fusing ? "panel" : own
     }
 
+    /// How many morphs are still in flight. While any is, the rims are off: each rim is
+    /// drawn on its own slab's rectangle, and mid-morph the glass is one liquid body whose
+    /// outline is nothing like those rectangles — the three hairlines cut straight across
+    /// the merged glass and the necks between the pieces. The glass draws its own edge
+    /// throughout, so what shows is exactly the liquid outline. A count rather than a flag,
+    /// so a morph reversed halfway does not bring the rims back under the second one.
+    private var _morphing = State(initialValue: 0)
+    private var morphing: Int {
+        get { _morphing.wrappedValue }
+        nonmutating set { _morphing.wrappedValue = newValue }
+    }
+
     private func pour(_ open: Bool) {
+        withAnimation(Self.paced(.easeOut(duration: 0.08))) { morphing += 1 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.95 * Self.slowMo) {
+            withAnimation(Self.paced(.easeIn(duration: 0.25))) { morphing -= 1 }
+        }
         if open {
             withAnimation(Self.morphSpring) { fusing = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9 * Self.slowMo) {
@@ -247,6 +262,7 @@ struct RootView: View {
                 shape.strokeBorder(Self.specular, lineWidth: 1)
                     .opacity(search.reduceTransparency ? 0 : 1)
             }
+            .opacity(morphing > 0 ? 0 : 1)
     }
 
     private static let specular = LinearGradient(
