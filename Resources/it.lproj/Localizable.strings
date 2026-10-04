@@ -16,7 +16,10 @@
 /* Settings screen. */
 "Settings" = "Impostazioni";
 "Appearance" = "Aspetto";
-"Window opacity" = "Opacità della finestra";
+"Glass thickness" = "Spessore del vetro";
+"Thin" = "Sottile";
+"Medium" = "Medio";
+"Thick" = "Spesso";
 "Shortcut" = "Scorciatoia";
 "Open SpotVibe" = "Apri SpotVibe";
 "Press a shortcut…" = "Premi una scorciatoia…";

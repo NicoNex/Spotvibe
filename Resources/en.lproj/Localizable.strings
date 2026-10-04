@@ -20,7 +20,10 @@
 /* Settings screen. */
 "Settings" = "Settings";
 "Appearance" = "Appearance";
-"Window opacity" = "Window opacity";
+"Glass thickness" = "Glass thickness";
+"Thin" = "Thin";
+"Medium" = "Medium";
+"Thick" = "Thick";
 "Shortcut" = "Shortcut";
 "Open SpotVibe" = "Open SpotVibe";
 "Press a shortcut…" = "Press a shortcut…";

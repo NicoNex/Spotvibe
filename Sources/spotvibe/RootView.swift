@@ -89,14 +89,21 @@ struct RootView: View {
         // The system has no thickness knob — `.clear` and `.regular` are the whole family —
         // so "thin" is the clear material and the other two are the regular one, separated
         // by the scrim below. `.clear` does take a tint, despite what one might assume.
-        return (settings.usesClearGlass ? Glass.clear : .regular).tint(tint).interactive()
+        guard settings.thickness == .thin else { return .regular.tint(tint).interactive() }
+        return .clear.tint(tint).interactive()
     }
 
     /// Sits ON TOP of the material (the background modifier is applied before `.glassEffect`,
     /// so the glass goes behind it). `.clear` on its own is too thin for a panel this dense
     /// with small text — over a busy backdrop the labels collide with what is behind them —
-    /// so the scrim is there from the first notch of the slider and grows with it.
-    private var scrim: CGFloat { settings.scrim }
+    /// so even the thin setting keeps a little, and the thick one leans on it.
+    private var scrim: CGFloat {
+        switch settings.thickness {
+        case .thin: 0.18
+        case .medium: 0
+        case .thick: 0.38
+        }
+    }
 
     private var solidFallback: AnyShapeStyle {
         if search.reduceTransparency { return AnyShapeStyle(.windowBackground) }

@@ -16,6 +16,14 @@ import Observation
 
 @Observable
 public final class Preferences {
+    /// How much of the backdrop the glass lets through. The system has no thickness knob —
+    /// `.clear` and `.regular` are the whole family — so the middle of the three is the
+    /// material on its own and the outer two add or remove a scrim over it.
+    public enum Thickness: String, CaseIterable, Identifiable {
+        case thin, medium, thick
+        public var id: String { rawValue }
+    }
+
     /// Spotlight's own scope constants. Home is the default because the whole-disk scope
     /// drags in caches, SDKs and system bundles that nobody means to open by name.
     public enum Scope: String, CaseIterable, Identifiable {
@@ -59,9 +67,7 @@ public final class Preferences {
 
     public init(store: UserDefaults = .standard) {
         self.store = store
-        // The three-step "thickness" this replaced is read once, so nobody's panel changes.
-        opacity = store.object(forKey: Key.opacity) as? Double
-            ?? ["thin": 0.25, "thick": 0.9][store.string(forKey: Key.thickness) ?? ""] ?? Self.defaultOpacity
+        thickness = Self.stored(store, Key.thickness, or: .medium)
         scope = Self.stored(store, Key.scope, or: .home)
         engine = Self.stored(store, Key.engine, or: .duckduckgo)
         showRecents = store.object(forKey: Key.showRecents) as? Bool ?? true
@@ -76,8 +82,7 @@ public final class Preferences {
     }
 
     private enum Key {
-        static let thickness = "thickness" // legacy, only read for the migration
-        static let opacity = "opacity"
+        static let thickness = "thickness"
         static let scope = "scope"
         static let engine = "engine"
         static let showRecents = "showRecents"
@@ -86,33 +91,7 @@ public final class Preferences {
         static let hotKeyLabel = "hotKeyLabel"
     }
 
-    /// How much of the backdrop the window hides, 0 (most of it shows through) to 1 (least).
-    /// The system has no such knob — `.clear` and `.regular` are the whole family — so the
-    /// slider picks the clear material at its low end, the regular one from there up, and a
-    /// scrim over either. The middle is the default and the slider snaps to it.
-    public var opacity: Double { didSet { store.set(opacity, forKey: Key.opacity) } }
-
-    public static let defaultOpacity = 0.5
-    /// How close a drag has to come to the middle for it to stick there.
-    public static let snapRange = 0.04
-
-    public static func snapped(_ value: Double) -> Double {
-        abs(value - defaultOpacity) < snapRange ? defaultOpacity : value
-    }
-
-    /// Below this the glass is the clear material, above it the regular one.
-    public static let clearBelow = 0.3
-    public var usesClearGlass: Bool { opacity < Self.clearBelow }
-
-    /// Opacity of the window-background fill under the glass. Clear glass takes up to 0.12;
-    /// the regular glass is already the heavier material, so the scrim eases back to nothing
-    /// as it takes over, then grows quadratically — fine control around the default, where
-    /// the regular glass on its own is the look the app shipped with, and a firm one at the top.
-    public var scrim: Double {
-        if usesClearGlass { return 0.12 * opacity / Self.clearBelow }
-        let t = (opacity - Self.clearBelow) / (1 - Self.clearBelow)
-        return 0.5 * t * t
-    }
+    public var thickness: Thickness { didSet { store.set(thickness.rawValue, forKey: Key.thickness) } }
     public var engine: Engine { didSet { store.set(engine.rawValue, forKey: Key.engine) } }
     /// Announced like the scope is: the shelf is built inside the search's rebuild, so
     /// without telling it, turning this off changed nothing until the panel was next

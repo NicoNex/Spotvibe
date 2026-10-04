@@ -107,16 +107,15 @@ struct SettingsView: View {
             HStack(alignment: .top, spacing: Self.columnGap) {
                 VStack(alignment: .leading, spacing: Self.groupGap) {
                     group(loc("Appearance")) {
-                        row("circle.lefthalf.filled", loc("Window opacity")) {
-                            // Live: the panel behind these settings changes as the thumb moves.
-                            Slider(value: opacity, in: 0 ... 1)
-                                .labelsHidden()
-                                .frame(width: 176)
-                                // The notch the slider snaps to: the default, in the middle.
-                                .overlay(alignment: .bottom) {
-                                    Capsule().fill(.secondary.opacity(0.6)).frame(width: 1.5, height: 5)
-                                        .offset(y: 6)
-                                }
+                        row("circle.lefthalf.filled", loc("Glass thickness")) {
+                            Picker("", selection: bound.thickness) {
+                                Text(loc("Thin")).tag(Preferences.Thickness.thin)
+                                Text(loc("Medium")).tag(Preferences.Thickness.medium)
+                                Text(loc("Thick")).tag(Preferences.Thickness.thick)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(width: 176)
                         }
                     }
                     group(loc("Search")) {
@@ -194,18 +193,6 @@ struct SettingsView: View {
     // double click came from: AppKit already performs feedback for a segmented control and
     // a switch, and the trackpad clicks on release regardless.
     private var bound: Bindable<Preferences> { Bindable(settings) }
-
-    /// Snaps to the default, and says so with a tap — a slider drag has no click of its own,
-    /// which is the case the haptic is kept for.
-    private var opacity: Binding<Double> {
-        Binding(get: { settings.opacity }, set: { value in
-            let snapped = Preferences.snapped(value)
-            if snapped == Preferences.defaultOpacity, settings.opacity != snapped {
-                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
-            }
-            settings.opacity = snapped
-        })
-    }
 
     /// Haptic only where a value changes without a click: recording a shortcut, which is
     /// committed by the keyboard (see HotKeyRecorder). Everywhere else the trackpad is
