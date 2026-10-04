@@ -18,25 +18,26 @@ import SwiftUI
 /// is the wrong thing on any layout where the character moves.
 @Observable
 final class HotKeyRecorder {
-    var active = false
+    /// Whether a chord is being waited for lives on the preferences, not here: the
+    /// controller watches it to let go of the global hotkey while we listen, so the chord
+    /// that is already bound can be pressed to confirm itself.
     @ObservationIgnored private var monitor: Any?
-    @ObservationIgnored var onCapture: ((UInt32, UInt32, String) -> Void)?
+    @ObservationIgnored private var settings: Preferences?
 
-    @ObservationIgnored var onActiveChanged: ((Bool) -> Void)?
+    func toggle(_ settings: Preferences) { monitor == nil ? start(settings) : stop() }
 
-    func toggle() { active ? stop() : start() }
-
-    func start() {
+    func start(_ settings: Preferences) {
         guard monitor == nil else { return }
-        active = true
-        onActiveChanged?(true)
+        self.settings = settings
+        settings.recording = true
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             if event.keyCode == UInt16(kVK_Escape) { stop(); return nil }
             let carbon = Self.carbonModifiers(event.modifierFlags)
             // A hotkey with no modifier would swallow that key everywhere, system-wide.
             guard carbon != 0 else { return nil }
-            onCapture?(UInt32(event.keyCode), carbon, Self.label(for: event))
+            settings.setHotKey(code: UInt32(event.keyCode), modifiers: carbon, label: Self.label(for: event))
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
             stop()
             return nil // swallowed, or the chord also reaches the search field
         }
@@ -46,8 +47,7 @@ final class HotKeyRecorder {
         guard monitor != nil else { return } // or the hotkey is re-bound on every redraw
         NSEvent.removeMonitor(monitor!)
         monitor = nil
-        active = false
-        onActiveChanged?(false)
+        settings?.recording = false
     }
 
     deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
@@ -98,15 +98,6 @@ struct SettingsView: View {
     private var _recorder = State(initialValue: HotKeyRecorder())
     private var recorder: HotKeyRecorder { _recorder.wrappedValue }
 
-    /// Fired ONLY where a value changes without a click: recording a shortcut, which is
-    /// committed by the keyboard. Everywhere else the trackpad is already clicking — once
-    /// going down and once coming back up — and a tap of our own on top of the release
-    /// click is the doubled click you feel. `.alignment` and not `.levelChange`: the level
-    /// pattern is the force-click detent, which is itself two taps.
-    private static func haptic() {
-        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             title
@@ -115,58 +106,49 @@ struct SettingsView: View {
             // far right, and the eye has to travel the whole width to pair label to value.
             HStack(alignment: .top, spacing: Self.columnGap) {
                 VStack(alignment: .leading, spacing: Self.groupGap) {
-                    group(loc("Appearance"), rows: [
-                        Self.Row(icon: "circle.lefthalf.filled", label: loc("Glass thickness")) {
-                            AnyView(
-                                Picker("", selection: bound.thickness) {
-                                    Text(loc("Thin")).tag(Preferences.Thickness.thin)
-                                    Text(loc("Medium")).tag(Preferences.Thickness.medium)
-                                    Text(loc("Thick")).tag(Preferences.Thickness.thick)
-                                }
-                                .pickerStyle(.segmented)
+                    group(loc("Appearance")) {
+                        row("circle.lefthalf.filled", loc("Glass thickness")) {
+                            Picker("", selection: bound.thickness) {
+                                Text(loc("Thin")).tag(Preferences.Thickness.thin)
+                                Text(loc("Medium")).tag(Preferences.Thickness.medium)
+                                Text(loc("Thick")).tag(Preferences.Thickness.thick)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(width: 176)
+                        }
+                    }
+                    group(loc("Search")) {
+                        row("folder", loc("Look in")) {
+                            Picker("", selection: bound.scope) {
+                                Text(loc("Home folder")).tag(Preferences.Scope.home)
+                                Text(loc("Whole Mac")).tag(Preferences.Scope.everywhere)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(width: 176)
+                        }
+                        Divider().opacity(0.5).padding(.leading, 42)
+                        row("clock.arrow.circlepath", loc("Show recents")) {
+                            Toggle("", isOn: bound.showRecents)
+                                .toggleStyle(.switch)
                                 .labelsHidden()
-                                .frame(width: 176)
-                            )
-                        },
-                    ])
-                    group(loc("Search"), rows: [
-                        Self.Row(icon: "folder", label: loc("Look in")) {
-                            AnyView(
-                                Picker("", selection: bound.scope) {
-                                    Text(loc("Home folder")).tag(Preferences.Scope.home)
-                                    Text(loc("Whole Mac")).tag(Preferences.Scope.everywhere)
-                                }
-                                .pickerStyle(.segmented)
-                                .labelsHidden()
-                                .frame(width: 176)
-                            )
-                        },
-                        Self.Row(icon: "clock.arrow.circlepath", label: loc("Show recents")) {
-                            AnyView(
-                                Toggle("", isOn: bound.showRecents)
-                                    .toggleStyle(.switch)
-                                    .labelsHidden()
-                            )
-                        },
-                    ])
+                        }
+                    }
                 }
                 VStack(alignment: .leading, spacing: Self.groupGap) {
-                    group(loc("Shortcut"), rows: [
-                        Self.Row(icon: "keyboard", label: loc("Open SpotVibe")) {
-                            AnyView(recorderButton)
-                        },
-                    ])
-                    group(loc("Web"), rows: [
-                        Self.Row(icon: "magnifyingglass", label: loc("Search engine")) {
-                            AnyView(
-                                Picker("", selection: bound.engine) {
-                                    ForEach(Preferences.Engine.allCases) { Text($0.label).tag($0) }
-                                }
-                                .labelsHidden()
-                                .frame(width: 150)
-                            )
-                        },
-                    ])
+                    group(loc("Shortcut")) {
+                        row("keyboard", loc("Open SpotVibe")) { recorderButton }
+                    }
+                    group(loc("Web")) {
+                        row("magnifyingglass", loc("Search engine")) {
+                            Picker("", selection: bound.engine) {
+                                ForEach(Preferences.Engine.allCases) { Text($0.label).tag($0) }
+                            }
+                            .labelsHidden()
+                            .frame(width: 150)
+                        }
+                    }
                     Spacer(minLength: 0)
                     hint
                 }
@@ -212,20 +194,13 @@ struct SettingsView: View {
     // a switch, and the trackpad clicks on release regardless.
     private var bound: Bindable<Preferences> { Bindable(settings) }
 
+    /// Haptic only where a value changes without a click: recording a shortcut, which is
+    /// committed by the keyboard (see HotKeyRecorder). Everywhere else the trackpad is
+    /// already clicking — once going down and once coming back up — and a tap of our own on
+    /// top of the release click is the doubled click you feel.
     private var recorderButton: some View {
-        Button {
-            // `[settings]`, not self: the recorder lives in this view's state, so a closure
-            // holding the view would hold the recorder that holds the closure.
-            recorder.onCapture = { [settings] code, modifiers, label in
-                settings.setHotKey(code: code, modifiers: modifiers, label: label)
-                Self.haptic()
-            }
-            // The controller watches this to let go of the global hotkey while we listen,
-            // so the chord that is already bound can be pressed to confirm itself.
-            recorder.onActiveChanged = { [settings] in settings.recording = $0 }
-            recorder.toggle()
-        } label: {
-            Text(recorder.active ? loc("Press a shortcut…") : settings.hotKeyLabel)
+        Button { recorder.toggle(settings) } label: {
+            Text(settings.recording ? loc("Press a shortcut…") : settings.hotKeyLabel)
                 .font(.system(size: 13, weight: .medium))
                 .monospacedDigit()
                 .frame(width: 150)
@@ -236,17 +211,10 @@ struct SettingsView: View {
 
     // MARK: Chrome
 
-    private struct Row: Identifiable {
-        let icon: String
-        let label: String
-        let control: () -> AnyView
-        var id: String { icon + label }
-    }
-
     /// A caption over a card of rows, which is how every settings window on this Mac is
     /// laid out — the grouping is the thing being read, and a hairline across the whole
     /// panel does not group, it only divides.
-    private func group(_ name: String, rows: [Row]) -> some View {
+    private func group(_ name: String, @ViewBuilder rows: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(name.uppercased())
                 .font(.system(size: 10, weight: .semibold))
@@ -255,30 +223,25 @@ struct SettingsView: View {
                 .padding(.leading, 4)
             // ponytail: a plain translucent fill, NOT a second glass layer. Glass cannot
             // sample glass, and the slab under this one already is some.
-            VStack(spacing: 0) {
-                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    if index > 0 { Divider().opacity(0.5).padding(.leading, 42) }
-                    self.row(row)
-                }
-            }
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.primary.opacity(0.055)))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(.primary.opacity(0.07), lineWidth: 0.5))
+            VStack(spacing: 0, content: rows)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.primary.opacity(0.055)))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(.primary.opacity(0.07), lineWidth: 0.5))
         }
     }
 
-    private func row(_ row: Row) -> some View {
+    private func row(_ icon: String, _ label: String, @ViewBuilder control: () -> some View) -> some View {
         HStack(spacing: 10) {
             // The symbol is what makes a row findable at a glance; the label is what makes
             // it unambiguous. Fixed width so every label starts on the same line.
-            Image(systemName: row.icon)
+            Image(systemName: icon)
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .frame(width: 18)
-            Text(row.label).font(.system(size: 13)).lineLimit(1).fixedSize()
+            Text(label).font(.system(size: 13)).lineLimit(1).fixedSize()
             Spacer(minLength: 12)
-            row.control()
+            control()
         }
         .padding(.horizontal, 12)
         .frame(height: 46)

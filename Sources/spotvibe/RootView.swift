@@ -19,16 +19,8 @@ struct RootView: View {
     // SwiftUIMacros plugin ships with Xcode only and this target builds against the
     // Command Line Tools. Collapse both back to attributes once Xcode is installed.
     private var _focused = FocusState<Bool>()
-    private var focused: Bool {
-        get { _focused.wrappedValue }
-        nonmutating set { _focused.wrappedValue = newValue }
-    }
-
     private var _ns = Namespace()
-
-    private var query: Binding<String> {
-        Binding(get: { search.text }, set: { search.text = $0 })
-    }
+    private var ns: Namespace.ID { _ns.wrappedValue }
 
     /// Derived, not a second 7: the recents shelf is exactly one row of this grid, and two
     /// constants that must match would only drift apart.
@@ -41,7 +33,7 @@ struct RootView: View {
     private static let outerPadding: CGFloat = 34
     /// The window is a FIXED size and the content is laid out inside it. A window resize is
     /// a single AppKit step that cannot agree with a SwiftUI interpolation, so a self-sizing
-    /// window would jolt the panel on every frame of the entrance spring.
+    /// window would jolt the panel.
     static let panelSize = CGSize(width: panelWidth + outerPadding * 2, height: 850)
     /// Where the panel sits, measured from the top of the screen.
     private static let topInset: CGFloat = 188
@@ -51,52 +43,26 @@ struct RootView: View {
     /// as one control strip. The field gives up exactly that much width plus the gap.
     private static let gearGap: CGFloat = 12
     private static let fieldWidth = panelWidth - fieldHeight - gearGap
-    /// The settings slab stands in for the field row AND the results, so it is as tall as
-    /// both together. Fixed, because settings do not grow or shrink with a search.
+    /// The settings take the results' place under the field row, and are as tall as they
+    /// need to be. Fixed, because settings do not grow or shrink with a search.
     private static let settingsHeight: CGFloat = 306
-
-    /// The entrance: the slabs spring from slightly under full size up to it, overshooting
-    /// once on a lightly damped spring. Done with the FRAME, never with scaleEffect — a
-    /// transform forces the subtree offscreen and the glass stops sampling the live
-    /// backdrop, which is the whole effect.
-    private static let openScale: CGFloat = 0.94
-    private var scale: CGFloat {
-        search.opened || search.reduceMotion ? 1 : Self.openScale
-    }
-
-    /// A capsule: radius is half the height, so the ends are true semicircles. Spotlight's
-    /// field is one, and at 28 mine read as a rounded box next to it.
-    /// The bar and the gear share this: the morph is only convincing because both bodies
-    /// end on exactly the same rectangle, and two separately maintained expressions that
-    /// happen to agree is not the same thing as one that cannot disagree.
-    private var morphShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: search.showingSettings ? Self.slabRadius
-                                                              : Self.fieldHeight * scale / 2,
-                         style: .continuous)
-    }
-    private var morphHeight: CGFloat {
-        search.showingSettings ? Self.settingsHeight * scale : Self.fieldHeight * scale
-    }
-    /// The bar grows into the panel from the LEFT while the gear grows into it from the
-    /// right, so what the eye follows is two bodies of glass running into each other and
-    /// closing up, rather than one arriving over a bar that only sat there and stopped
-    /// existing. Only the widths differ; the height and the corner are `morph…` above.
-    private var fieldWidthNow: CGFloat {
-        search.showingSettings ? Self.panelWidth * scale : Self.fieldWidth * scale
-    }
-    /// The gear circle IS the settings panel, mid-morph: same element, same glass, a radius
-    /// and a frame that interpolate. Continuous rather than circular so the curve is the
-    /// same family at both ends and the corner can actually be animated between them.
-    private var gearWidth: CGFloat {
-        search.showingSettings ? Self.panelWidth * scale : Self.fieldHeight * scale
-    }
     /// 40, not 26. Lensing happens at the rim, and on a slab this size the rim is a
     /// hairline around a large frosted field — a wider curve puts more of the edge at an
     /// angle where it actually bends what is behind it.
-    private var listShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Self.slabRadius, style: .continuous)
-    }
     private static let slabRadius: CGFloat = 40
+    /// The container's merge distance. Under the 12 between field and gear and the 26 down
+    /// to the lower slab, so all three stay separate drops of glass at rest.
+    private static let mergeDistance: CGFloat = 8
+
+    /// The one animation of the settings change: the lower slab changes height and its
+    /// content changes with it. Nothing else moves, so there is nothing to keep in step.
+    private var settle: Animation? { search.reduceMotion ? nil : .smooth(duration: 0.32) }
+
+    /// The glass takes its time; the writing on it does not. Out fast, in after a beat, and
+    /// the two screens are never legible on the slab together.
+    private static let contentFade = AnyTransition.asymmetric(
+        insertion: .opacity.animation(.easeIn(duration: 0.16).delay(0.12)),
+        removal: .opacity.animation(.easeOut(duration: 0.10)))
 
     /// The live system accent. Color.accentColor resolves to the asset-catalog accent and
     /// only falls back to the system one, so it is not the same guarantee.
@@ -145,107 +111,7 @@ struct RootView: View {
         return AnyShapeStyle(Color(nsColor: .windowBackgroundColor).opacity(scrim))
     }
 
-    /// `withAnimation` at the mutation site rather than `.animation(value:)` on the
-    /// container — though the real lesson was harder won: see the comment in `body` about
-    /// never adding or removing a glass element while an animation is running.
-    static let morphSpring = paced(.spring(response: 0.46, dampingFraction: 0.80))
-
-    /// `SPOTVIBE_SLOWMO=5` plays the morph five times slower. There is no system slow-motion
-    /// switch for SwiftUI on the Mac, and a morph this fast cannot be judged — or captured
-    /// frame by frame — at full speed.
-    static let slowMo = Double(ProcessInfo.processInfo.environment["SPOTVIBE_SLOWMO"] ?? "") ?? 1
-    static func paced(_ animation: Animation) -> Animation { animation.speed(1 / slowMo) }
-
-    private func showSettings(_ open: Bool) {
-        withAnimation(Self.morphSpring) { search.showingSettings = open }
-    }
-
-    /// The results slab collapses to nothing while the settings are open rather than being
-    /// taken out of the tree: see the note in `body`.
-    private var lowerHeight: CGFloat {
-        search.showingSettings ? 0 : resultsHeight
-    }
-
-    /// The gap the results slab keeps from the field row. It closes on the way into the
-    /// settings, so the slab rises INTO the panel instead of dissolving where it stands —
-    /// with the union below, that is the three pieces running together.
-    private var lowerOffset: CGFloat {
-        Self.fieldHeight * scale + (search.showingSettings ? 0 : Self.gap)
-    }
-
-    /// The container's merge distance, animated on its OWN clock rather than the morph's.
-    /// This is what makes the pieces read as liquid: glass closer than this flows together
-    /// with a bridge between, and the bridge snaps the moment the gap outgrows it.
-    ///
-    /// Going in it rises WITH the morph, staying a little ahead of the closing gaps, so
-    /// each pair throws out a neck just before it touches. Raised all at once instead, it
-    /// passed the 26 between bar and results on the first frame and the whole screen fused
-    /// into one blob before anything had moved. Coming out it holds high and only drains at the end
-    /// — the bar, the gear and the results pull apart with necks of glass still stretched
-    /// between them, which break one by one as each gap passes the falling distance (the
-    /// results, 26 away, let go before the gear, 12 away). At rest it is back under 12, so
-    /// the field and the gear sit as two separate drops.
-    private var _liquid = State(initialValue: Self.restSpacing)
-    private var liquid: CGFloat {
-        get { _liquid.wrappedValue }
-        nonmutating set { _liquid.wrappedValue = newValue }
-    }
-    private static let restSpacing: CGFloat = 8
-    private static let mergedSpacing: CGFloat = 34
-
-    /// The gear and the results share one union id for the length of the way IN, and
-    /// only then. Joining the union is what animates the glass going in: without it the
-    /// settings panel arrived at full size on the first frame. But leaving it, animated or
-    /// not, spawned the results slab as a droplet rising off the bottom of the panel on the
-    /// way out. So the union is let go once the panel has settled — while everything still
-    /// overlaps, the results are zero high and the merge distance holds it all as one
-    /// piece, so letting go changes nothing on screen — and the way out never has one.
-    /// The field is never in it: in it, its glass stopped being drawn and the bar blinked.
-    private var _fusing = State(initialValue: false)
-    private var fusing: Bool {
-        get { _fusing.wrappedValue }
-        nonmutating set { _fusing.wrappedValue = newValue }
-    }
-    private func unionID(_ own: String) -> String {
-        search.showingSettings && fusing ? "panel" : own
-    }
-
-    /// How many morphs are still in flight. While any is, the rims are off: each rim is
-    /// drawn on its own slab's rectangle, and mid-morph the glass is one liquid body whose
-    /// outline is nothing like those rectangles — the three hairlines cut straight across
-    /// the merged glass and the necks between the pieces. The glass draws its own edge
-    /// throughout, so what shows is exactly the liquid outline. A count rather than a flag,
-    /// so a morph reversed halfway does not bring the rims back under the second one.
-    private var _morphing = State(initialValue: 0)
-    private var morphing: Int {
-        get { _morphing.wrappedValue }
-        nonmutating set { _morphing.wrappedValue = newValue }
-    }
-
-    private func pour(_ open: Bool) {
-        withAnimation(Self.paced(.easeOut(duration: 0.08))) { morphing += 1 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.95 * Self.slowMo) {
-            withAnimation(Self.paced(.easeIn(duration: 0.25))) { morphing -= 1 }
-        }
-        if open {
-            withAnimation(Self.morphSpring) { fusing = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9 * Self.slowMo) {
-                withTransaction(Transaction(animation: nil)) { fusing = false }
-            }
-        }
-        withAnimation(open ? Self.paced(.easeInOut(duration: 0.40))
-                           : Self.paced(.easeIn(duration: 0.75))) {
-            liquid = open ? Self.mergedSpacing : Self.restSpacing
-        }
-    }
-
-    /// The glass takes its time; the writing on it does not. Left on the morph's own spring
-    /// the two sets of text are both legible for a third of a second and read as one page
-    /// printed twice. Out fast, in after a beat, and they never share the slab.
-    private static let contentFade = AnyTransition.asymmetric(
-        insertion: .opacity.animation(paced(.easeIn(duration: 0.16).delay(0.13))),
-        removal: .opacity.animation(paced(.easeOut(duration: 0.10)))
-    )
+    private func showSettings(_ open: Bool) { search.showingSettings = open }
 
     /// A hairline just inside the rim. The glass draws its own edge, but over a busy or
     /// low-contrast backdrop that edge washes out and the slab loses its outline. `.primary`
@@ -256,13 +122,12 @@ struct RootView: View {
     /// Over it, the specular edge: brightest along the top where the light is, fading down
     /// the sides and catching again at the bottom lip. That line is most of what makes a
     /// slab read as a thick piece of glass rather than a frosted card.
-    private func rim(_ shape: RoundedRectangle) -> some View {
+    private func rim(_ shape: some InsettableShape) -> some View {
         shape.strokeBorder(.primary.opacity(0.10), lineWidth: 0.5)
             .overlay {
                 shape.strokeBorder(Self.specular, lineWidth: 1)
                     .opacity(search.reduceTransparency ? 0 : 1)
             }
-            .opacity(morphing > 0 ? 0 : 1)
     }
 
     private static let specular = LinearGradient(
@@ -275,7 +140,7 @@ struct RootView: View {
     /// The one way a slab is dressed, in the one order that works: clipped BEFORE the glass
     /// (after it, the clip would rasterise the glass layer offscreen and cost the backdrop
     /// sampling), the scrim under the material, the rim over it.
-    private func slab<V: View>(_ content: V, in shape: RoundedRectangle) -> some View {
+    private func slab(_ content: some View, in shape: some InsettableShape) -> some View {
         content
             .clipShape(shape)
             .background(solidFallback, in: shape)
@@ -283,9 +148,8 @@ struct RootView: View {
             .overlay { rim(shape) }
     }
 
-    /// Two glass slabs in one container sharing a namespace: they sample the same backdrop
-    /// and lens into each other across the gap, which is where the Liquid Glass distortion
-    /// actually comes from. A single flat slab shows almost none of it.
+    /// Three glass slabs in one container: they sample the same backdrop and lens into each
+    /// other across the gap, which is where the Liquid Glass distortion actually comes from.
     var body: some View {
         ZStack(alignment: .top) {
             // Clicking the margin dismisses, the way clicking outside the panel does. The
@@ -295,107 +159,53 @@ struct RootView: View {
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onClose)
 
-            // Spacing is the MERGE distance, not padding: two glass elements closer together
-            // than this stop being two shapes and flow into one, the way two drops touching
-            // do. At rest it is under the 12 between the field and the gear, so they sit
-            // apart; `liquid` animates it on its own clock during the morph — see there.
-            GlassEffectContainer(spacing: liquid) {
-                // A ZStack and not a VStack, with the results pinned at a FIXED offset. In a
-                // stack the growing settings panel pushes whatever is under it down the
-                // screen, so the grid slid out of the bottom of the panel while it faded —
-                // which reads as the old screen falling out rather than as one thing
-                // becoming another. Nothing below moves now; the panel simply covers it.
-                ZStack(alignment: .top) {
-                    if search.showingSettings || (search.rowCount > 0 && search.expanded) {
-                        // Clipped to the slab: a selected cell scrolled past the rounded
-                        // edge was drawing outside the panel.
-                        slab(results
-                            // The slab drains on the morph's spring; the grid on it goes
-                            // out immediately, or it stays readable under the settings
-                            // panel that is growing over the same space.
-                            .opacity(search.showingSettings ? 0 : 1)
-                            .animation(Self.paced(.easeOut(duration: 0.10)), value: search.showingSettings)
-                            .frame(width: Self.panelWidth * scale, height: lowerHeight * scale,
-                                   alignment: .top),
-                             in: listShape)
-                            .glassEffectID("results", in: _ns.wrappedValue)
-                            .glassEffectUnion(id: unionID("results"), namespace: _ns.wrappedValue)
-                            .padding(.top, lowerOffset)
-                            // On the way out, a beat behind the panel: the panel retracts
-                            // first and the results then drip out of its lower edge, instead
-                            // of already lying there when the panel pulls back off them.
-                            .animation(Self.paced(.spring(response: 0.5, dampingFraction: 0.78)
-                                .delay(search.showingSettings ? 0 : 0.10)),
-                                       value: search.showingSettings)
-                    }
-
-                    // NO glass element is ever added or removed here. One that goes away
-                    // mid-animation comes back looking right and un-hit-testable — the gear
-                    // did exactly that, and every click after the first one fell through.
-                    // So the morph is the gear's OWN frame and corner radius: the circle
-                    // grows into the settings panel while the field collapses into it, and
-                    // the results slab drops to zero height. Same three elements throughout.
-                    // The row OVERLAPS rather than stacking side by side. Laid out as an
-                    // HStack the field has to give up its width for the panel to have any,
-                    // so it retreated to the right and vanished into the gear — the bar
-                    // leaving, not the two of them joining. Here the bar does not move at
-                    // all: it keeps its size and place, and the panel grows leftwards over
-                    // it. Where they overlap, the merge distance makes them one body of glass rather
-                    // than two stacked layers, which is the thing that reads as liquid.
-                    ZStack(alignment: .topLeading) {
+            GlassEffectContainer(spacing: Self.mergeDistance) {
+                VStack(spacing: Self.gap) {
+                    HStack(spacing: Self.gearGap) {
                         slab(field
                             // Opacity on the CONTENT, inside the glass — never on the
                             // element, which would rasterise the glass layer.
-                            .opacity(search.showingSettings ? 0 : 1)
-                            // Out fast, for the same reason the results are: the placeholder
-                            // would otherwise still be legible across the settings title.
-                            .animation(Self.paced(.easeOut(duration: 0.10)), value: search.showingSettings)
-                            .frame(width: fieldWidthNow, height: morphHeight)
-                            // A beat behind the gear. Both bodies end on the same rectangle,
-                            // and the bar has almost no width left to gain, so on the same
-                            // curve it arrives first and the circle is left trailing after
-                            // it as a dot. Delayed, the order reads the way the press did:
-                            // the button opens, and the bar runs in after it.
-                            .animation(Self.paced(.spring(response: 0.46, dampingFraction: 0.80).delay(0.09)), value: search.showingSettings),
-                             in: morphShape)
-                            .glassEffectID("field", in: _ns.wrappedValue)
-
-                        slab(gearSlab.frame(width: gearWidth, height: morphHeight), in: morphShape)
-                            .glassEffectID("gear", in: _ns.wrappedValue)
-                            .glassEffectUnion(id: unionID("gear"), namespace: _ns.wrappedValue)
-                            // Its own curve, like the other two, instead of whatever
-                            // transaction the change arrived in.
-                            .animation(Self.morphSpring, value: search.showingSettings)
-                            // Pinned to the right edge of the panel, so the circle stays
-                            // exactly where it was pressed and every new pixel it gains
-                            // appears on its left, running across the bar.
-                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .opacity(search.showingSettings ? 0.4 : 1)
+                            .disabled(search.showingSettings)
+                            .frame(width: Self.fieldWidth, height: Self.fieldHeight),
+                             in: Capsule())
+                        slab(gear.frame(width: Self.fieldHeight, height: Self.fieldHeight),
+                             in: Capsule())
                     }
-                    .frame(width: Self.panelWidth * scale, alignment: .leading)
+                    // Clipped to the slab: a selected cell scrolled past the rounded edge
+                    // was drawing outside the panel.
+                    if search.showingSettings || (search.rowCount > 0 && search.expanded) {
+                        slab(lower.frame(width: Self.panelWidth, height: lowerHeight,
+                                         alignment: .top),
+                             in: RoundedRectangle(cornerRadius: Self.slabRadius, style: .continuous))
+                            // A glass element that is added or removed mid-animation comes
+                            // back un-hit-testable, so this one only ever appears or goes
+                            // at once; what animates is its height and its content.
+                            .transition(.identity)
+                    }
                 }
+                .animation(settle, value: search.showingSettings)
                 .padding(.horizontal, Self.outerPadding)
                 .padding(.top, Self.topInset)
             }
-            // Lightly damped, and the overshoot IS the elastic: the slabs run just past
-            // full size and settle back.
-            .animation(.spring(response: 0.34, dampingFraction: 0.62), value: search.opened)
         }
         .frame(width: Self.panelSize.width, height: Self.panelSize.height, alignment: .top)
         // Nothing here wraps the glass container in opacity, blur, scale or shadow. Every
         // one of those forces the subtree offscreen, and a glass layer that renders
         // offscreen stops sampling the live backdrop — it degrades to a flat blur with no
         // rim refraction. Present and dismiss are animated on the NSPanel, in AppShell.
-        .onAppear { focused = true }
-        // Here rather than in showSettings, so Esc, the gear and the demo all pour the same.
-        .onChange(of: search.showingSettings) { _, open in pour(open) }
+        .onAppear { _focused.wrappedValue = true }
         // The hosting view outlives every hide, so re-show has to re-assert focus itself.
         // `visible` goes false on every hide, so each show is a change even mid-fade.
-        .onChange(of: search.visible) { _, shown in if shown { focused = true } }
+        .onChange(of: search.visible) { _, shown in if shown { _focused.wrappedValue = true } }
         // Esc backs out of settings first, and only closes the panel from the search screen.
         .onExitCommand {
             if search.showingSettings { showSettings(false) } else { onClose() }
         }
         .task(id: search.text) {
+            // Not while hidden: `reset()` clears the text after the fade, and that would
+            // otherwise wake a task for a panel nobody can see.
+            guard search.visible else { return }
             // `try?` here would swallow the cancellation and run the search anyway,
             // firing once per keystroke — the exact thrash this debounce exists to stop.
             do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
@@ -403,18 +213,20 @@ struct RootView: View {
         }
     }
 
-    /// What is drawn inside that one glass element: the gear glyph, or the settings. These
-    /// are plain views, not glass, so swapping them carries none of the glass constraints.
+    private var lowerHeight: CGFloat {
+        search.showingSettings ? Self.settingsHeight : resultsHeight
+    }
+
+    /// Results or settings, whichever the gear chose. Plain views, not glass, so swapping
+    /// them carries none of the glass constraints.
     @ViewBuilder
-    private var gearSlab: some View {
+    private var lower: some View {
         if search.showingSettings {
-            // Laid out at its FINAL size inside a frame that is still a circle, so the
-            // growth reveals a finished screen instead of reflowing one at every width.
             SettingsView(settings: settings) { showSettings(false) }
                 .frame(width: Self.panelWidth, height: Self.settingsHeight)
                 .transition(Self.contentFade)
         } else {
-            gear.transition(Self.contentFade)
+            results.transition(Self.contentFade)
         }
     }
 
@@ -442,7 +254,7 @@ struct RootView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.secondary)
-            TextField(loc("Search apps and files"), text: query)
+            TextField(loc("Search apps and files"), text: Bindable(search).text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 20, weight: .light))
                 .foregroundStyle(.primary)
@@ -525,7 +337,7 @@ struct RootView: View {
     private static let gridColumns = Array(repeating: GridItem(.fixed(cellWidth), spacing: 0),
                                            count: columns)
 
-    private func grid(_ models: [RowModel]) -> some View {
+    private func grid(_ models: ArraySlice<RowModel>) -> some View {
         LazyVGrid(columns: Self.gridColumns, spacing: Self.cellGap) {
             ForEach(models) { cell(model: $0) }
         }
@@ -535,9 +347,9 @@ struct RootView: View {
         // Built once here, then sliced. Going through the `rows` getter per section would
         // rebuild the whole array for every access, several times per body evaluation.
         let all = rows
-        let recentRows = Array(all.prefix(search.recentCount))
-        let appRows = Array(all.dropFirst(search.recentCount).prefix(appGridCount))
-        let listRows = Array(all.dropFirst(search.appCount))
+        let recentRows = all.prefix(search.recentCount)
+        let appRows = all.dropFirst(search.recentCount).prefix(appGridCount)
+        let listRows = all.dropFirst(search.appCount)
 
         return ScrollViewReader { proxy in
             ScrollView {
@@ -659,7 +471,7 @@ struct RootView: View {
                     shape.fill(accent)
                 }
             }
-            .matchedGeometryEffect(id: "selection", in: _ns.wrappedValue)
+            .matchedGeometryEffect(id: "selection", in: ns)
         }
     }
 
@@ -777,11 +589,11 @@ struct RootView: View {
             guard search.launching == nil else { return }
             search.record(hit)
             search.launching = hit.id
-            // Let the pop play, then launch and dismiss.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.19) {
-                // Esc or a click outside during those 190 ms runs reset(), which clears
-                // this — and then the app must not be launched after all.
-                guard search.launching == hit.id else { return }
+            // Let the pop play, then launch and dismiss. Esc or a click outside during those
+            // 190 ms runs reset(), which cancels this — and then the app must not launch.
+            search.launchTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(190))
+                guard !Task.isCancelled else { return }
                 open(hit.url)
                 onClose()
             }

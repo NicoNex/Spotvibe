@@ -88,6 +88,17 @@ struct PrettyPathTests {
         #expect(prettyPath("/Users/me/b/Users/me/x", home: "/Users/me") == "~/b/Users/me/x")
     }
 
+    @Test("a sibling whose name starts with the home name is not under home")
+    func siblingPrefix() {
+        #expect(prettyPath("/Users/me2/x", home: "/Users/me") == "/Users/me2/x")
+    }
+
+    @Test("a search term cannot end its own query")
+    func termIsEscaped() {
+        #expect(Preferences.Engine.google.url(for: "c++ & rust")?.absoluteString
+                == "https://www.google.com/search?q=c%2B%2B%20%26%20rust")
+    }
+
     @Test("a path outside home is left alone")
     func outsideHome() {
         #expect(prettyPath("/Applications/Safari.app", home: "/Users/me") == "/Applications/Safari.app")
@@ -361,8 +372,9 @@ struct RecordingTests {
     @Test("recording is announced, so the controller can let go of the chord")
     func announced() {
         let settings = Preferences(store: scratchDefaults())
+        // What the controller sees on each re-bind: whether it must hold the chord or not.
         var seen: [Bool] = []
-        settings.onRecordingChanged = { seen.append($0) }
+        settings.onHotKeyChanged = { seen.append(settings.recording) }
 
         settings.recording = true
         // The chord already bound, pressed again to confirm itself: it only ever reaches the
@@ -372,7 +384,8 @@ struct RecordingTests {
                            label: settings.hotKeyLabel)
         settings.recording = false
 
-        #expect(seen == [true, false])
+        #expect(seen.first == true)
+        #expect(seen.last == false)
         #expect(settings.hotKeyLabel == "⌥Space")
     }
 }

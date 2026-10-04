@@ -17,6 +17,8 @@ public struct Hit: Identifiable, Hashable {
         // Derived once here, not per call: `matches` runs over every app on every
         // keystroke, and computing it there cost two NSString bridges a time.
         fileName = ((id as NSString).lastPathComponent as NSString).deletingPathExtension
+        nameLower = name.lowercased()
+        fileNameLower = fileName.lowercased()
     }
 
     public let id: String // absolute path
@@ -31,6 +33,9 @@ public struct Hit: Identifiable, Hashable {
     /// Calendar.app shows as "Calendario", and someone typing "calendar" still has to find
     /// it — so both names are matched.
     public let fileName: String
+    /// For ranking, which compares on every keystroke against every candidate.
+    let nameLower: String
+    let fileNameLower: String
 
     public func matches(_ term: String) -> Bool {
         name.localizedCaseInsensitiveContains(term) || fileName.localizedCaseInsensitiveContains(term)
@@ -47,6 +52,7 @@ public func wrap(_ index: Int, by delta: Int, count: Int) -> Int {
 }
 
 /// Anchored at the start: a plain replace would rewrite a second "/Users/me" mid-path.
+/// The "/" is part of the prefix, or "/Users/me2/x" would come out as "~2/x".
 public func prettyPath(_ path: String, home: String = NSHomeDirectory()) -> String {
-    path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+    path == home || path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
 }

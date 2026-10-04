@@ -6,6 +6,7 @@
 // Software Foundation. It comes with ABSOLUTELY NO WARRANTY; see LICENSE.
 
 import AppKit
+import Carbon.HIToolbox
 import Foundation
 import Observation
 
@@ -47,8 +48,12 @@ public final class Preferences {
             }
         }
 
+        private static let unreserved = CharacterSet.alphanumerics.union(.init(charactersIn: "-._~"))
+
         public func url(for term: String) -> URL? {
-            let q = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            // Unreserved characters only: .urlQueryAllowed lets & + = # through, and
+            // "c++ & rust" would then end the query at the ampersand.
+            let q = term.addingPercentEncoding(withAllowedCharacters: Self.unreserved) ?? ""
             switch self {
             case .duckduckgo: return URL(string: "https://duckduckgo.com/?q=\(q)")
             case .google: return URL(string: "https://www.google.com/search?q=\(q)")
@@ -66,10 +71,8 @@ public final class Preferences {
         scope = Self.stored(store, Key.scope, or: .home)
         engine = Self.stored(store, Key.engine, or: .duckduckgo)
         showRecents = store.object(forKey: Key.showRecents) as? Bool ?? true
-        // 49 is kVK_Space and 2048 is Carbon's optionKey — spelled as numbers because
-        // Carbon.HIToolbox is not available to this module.
-        hotKeyCode = store.object(forKey: Key.hotKeyCode) as? UInt32 ?? 49
-        hotKeyModifiers = store.object(forKey: Key.hotKeyModifiers) as? UInt32 ?? 2048
+        hotKeyCode = store.object(forKey: Key.hotKeyCode) as? UInt32 ?? UInt32(kVK_Space)
+        hotKeyModifiers = store.object(forKey: Key.hotKeyModifiers) as? UInt32 ?? UInt32(optionKey)
         hotKeyLabel = store.string(forKey: Key.hotKeyLabel) ?? "⌥Space"
     }
 
@@ -125,12 +128,12 @@ public final class Preferences {
     /// global hotkey for as long as it is: a registered hotkey is consumed by the system
     /// before any app sees the keys, so pressing the CURRENT chord to confirm it would
     /// reach the toggle and close the panel instead of being recorded.
-    public var recording = false { didSet { onRecordingChanged?(recording) } }
+    public var recording = false { didSet { onHotKeyChanged?() } }
 
+    /// Fired when the chord or the recording state changes: both end in the same re-bind.
     public var onHotKeyChanged: (() -> Void)?
     public var onScopeChanged: (() -> Void)?
     public var onRecentsChanged: (() -> Void)?
-    public var onRecordingChanged: ((Bool) -> Void)?
 
     /// Both halves land together, so the handler runs once with a consistent pair.
     public func setHotKey(code: UInt32, modifiers: UInt32, label: String) {

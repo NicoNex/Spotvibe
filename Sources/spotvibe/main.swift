@@ -11,8 +11,10 @@ import AppKit
 // declared in main.swift is initialised by main() rather than lazily — which
 // leaves it as uninitialised memory for anything that imports this module.
 
-let app = NSApplication.shared
-let controller = Controller()
-app.delegate = controller
-app.setActivationPolicy(.accessory) // no Dock icon, menu-bar only
-app.run()
+MainActor.assumeIsolated {
+    let app = NSApplication.shared
+    let controller = Controller()
+    app.delegate = controller // weak in AppKit: `controller` has to outlive run(), and does
+    app.setActivationPolicy(.accessory) // no Dock icon, menu-bar only
+    app.run()
+}

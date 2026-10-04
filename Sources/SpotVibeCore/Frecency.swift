@@ -30,6 +30,7 @@ public final class Frecency {
 
     public init(url: URL = Frecency.defaultURL) {
         self.url = url
+        Self.io.sync {} // a write still in flight from the last instance has to land first
         if let data = try? Data(contentsOf: url),
            let stored = try? JSONDecoder().decode([String: Entry].self, from: data) {
             entries = stored
@@ -96,16 +97,25 @@ public final class Frecency {
 
     private func prune(now: Date) {
         guard entries.count > Self.maxEntries else { return }
+        // Scored once per entry: a comparator that decays on both sides would run `pow`
+        // twice per comparison, n log n times.
         let keep = entries
-            .sorted { decayed($0.value, now: now) > decayed($1.value, now: now) }
+            .map { (key: $0.key, entry: $0.value, score: decayed($0.value, now: now)) }
+            .sorted { $0.score > $1.score }
             .prefix(Self.maxEntries * 4 / 5)
-        entries = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+        entries = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.entry) })
     }
 
-    // ponytail: synchronous write of a file measured in kilobytes, on an action that
-    // already launches an app. Move it off the main thread if it ever shows up in a trace.
+    /// One serial queue, so writes land in the order they were made.
+    private static let io = DispatchQueue(label: "spotvibe.frecency", qos: .utility)
+
+    /// Encoding and writing up to 5000 entries is not work for the launch animation's thread.
+    /// The snapshot is a value copy, so nothing here races the next `record`.
     private func save() {
-        guard let data = try? JSONEncoder().encode(entries) else { return }
-        try? data.write(to: url, options: .atomic)
+        let snapshot = entries, url = url
+        Self.io.async {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
     }
 }

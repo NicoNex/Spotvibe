@@ -21,45 +21,48 @@ final class Panel: NSPanel {
 // ponytail: Carbon RegisterEventHotKey is still the only system-wide hotkey API that
 // needs no Accessibility permission. An NSEvent global monitor would prompt the user.
 
-private var hotKeyRef: EventHotKeyRef?
-private var onHotKey: (() -> Void)?
-private var handlerInstalled = false
+/// Owns the Carbon handler and the one registered chord. The handler is installed once and
+/// re-registering is just unregistering the old reference and taking a new one.
+private final class HotKey {
+    private var ref: EventHotKeyRef?
+    private var action: (() -> Void)?
+    private var installed = false
 
-/// Installs the Carbon handler once, then binds the chord. Re-registering is just
-/// unregistering the old reference and taking a new one — the handler stays put.
-@discardableResult
-private func installHotKey(code: UInt32, modifiers: UInt32, _ action: @escaping () -> Void) -> Bool {
-    onHotKey = action
-    if !handlerInstalled {
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        guard InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
-            onHotKey?()
-            return noErr
-        }, 1, &spec, nil, nil) == noErr else { return false }
-        handlerInstalled = true
+    @discardableResult
+    func bind(code: UInt32, modifiers: UInt32, _ action: @escaping () -> Void) -> Bool {
+        self.action = action
+        if !installed {
+            var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+            guard InstallEventHandler(GetApplicationEventTarget(), { _, _, owner in
+                Unmanaged<HotKey>.fromOpaque(owner!).takeUnretainedValue().action?()
+                return noErr
+            }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil) == noErr else { return false }
+            installed = true
+        }
+        release()
+        // Fails with eventHotKeyExistsErr when Alfred, Raycast or an input-source switcher
+        // already owns the chord. Report it, or the app looks simply broken.
+        return RegisterEventHotKey(code, modifiers,
+                                   EventHotKeyID(signature: 0x5356_4245, id: 1),
+                                   GetApplicationEventTarget(), 0, &ref) == noErr
     }
-    if let existing = hotKeyRef { UnregisterEventHotKey(existing); hotKeyRef = nil }
-    // Fails with eventHotKeyExistsErr when Alfred, Raycast or an input-source switcher
-    // already owns the chord. Report it, or the app looks simply broken.
-    return RegisterEventHotKey(code, modifiers,
-                               EventHotKeyID(signature: 0x5356_4245, id: 1),
-                               GetApplicationEventTarget(), 0, &hotKeyRef) == noErr
-}
 
-/// Hands the chord back to the system. A registered hotkey never reaches the app at all,
-/// so while the settings are listening for a new one this has to be let go of — otherwise
-/// pressing the current chord to keep it would toggle the panel shut instead of being
-/// recorded as the choice it is.
-private func releaseHotKey() {
-    guard let existing = hotKeyRef else { return }
-    UnregisterEventHotKey(existing)
-    hotKeyRef = nil
+    /// Hands the chord back to the system. A registered hotkey never reaches the app at all,
+    /// so while the settings are listening for a new one this has to be let go of —
+    /// otherwise pressing the current chord to keep it would toggle the panel shut instead
+    /// of being recorded as the choice it is.
+    func release() {
+        guard let ref else { return }
+        UnregisterEventHotKey(ref)
+        self.ref = nil
+    }
 }
 
 // MARK: - Controller
 
-final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
+@MainActor final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let preferences = Preferences()
+    private let hotKey = HotKey()
     private lazy var search = Search(settings: preferences)
     private var panel: Panel!
     private var status: NSStatusItem!
@@ -72,7 +75,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // here costs nothing and makes the chord live as early as it can be.
         status = makeStatusItem(hotKeyOK: bindHotKey())
         preferences.onHotKeyChanged = { [weak self] in self?.syncHotKey() }
-        preferences.onRecordingChanged = { [weak self] _ in self?.syncHotKey() }
 
         panel = Panel(contentRect: NSRect(origin: .zero, size: RootView.panelSize),
                       styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
@@ -103,28 +105,17 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         preferences.onScopeChanged = { [weak self] in self?.search.rescope() }
         preferences.onRecentsChanged = { [weak self] in self?.search.refresh() }
 
+        #if DEBUG
+        // `make run DEMO=settings` opens straight onto the settings screen; any other value
+        // is typed into the field. Also what Tools/screenshots.sh drives.
         if let demo = ProcessInfo.processInfo.environment["SPOTVIBE_DEMO"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.show()
-                // `SPOTVIBE_DEMO=settings` opens straight onto the settings screen; any
-                // other value is typed into the field.
                 if demo == "settings" { self?.search.showingSettings = true }
-                else if demo == "morph" { self?.cycleSettings() }
                 else if demo != "1" { self?.search.text = demo }
             }
         }
-    }
-
-    /// `SPOTVIBE_DEMO=morph`: into the settings and back out, once each way, hands off —
-    /// so the morph can be recorded (pair with SPOTVIBE_SLOWMO to see every frame of it).
-    private func cycleSettings() {
-        let hold = 1.2 * RootView.slowMo
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            withAnimation(RootView.morphSpring) { self.search.showingSettings = true }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8 + hold) {
-            withAnimation(RootView.morphSpring) { self.search.showingSettings = false }
-        }
+        #endif
     }
 
     /// The single authority on who holds the chord and what the menu says about it.
@@ -133,14 +124,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// holds it — rather than as a rebind skipped in one callback and a label rewritten in
     /// both, which is what it was.
     private func syncHotKey() {
-        if preferences.recording { releaseHotKey(); return }
+        if preferences.recording { hotKey.release(); return }
         status.menu?.items.first?.title = Self.hotKeyMenuTitle(ok: bindHotKey(),
                                                                label: preferences.hotKeyLabel)
     }
 
     private func bindHotKey() -> Bool {
-        installHotKey(code: preferences.hotKeyCode,
-                      modifiers: preferences.hotKeyModifiers) { [weak self] in self?.toggle() }
+        hotKey.bind(code: preferences.hotKeyCode,
+                    modifiers: preferences.hotKeyModifiers) { [weak self] in self?.toggle() }
     }
 
     /// The chord is shown inline because a status-item menu cannot display a key equivalent
@@ -178,7 +169,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // where the notch is, and the panel's level is above the menu bar anyway.
         guard let full = screen?.frame else { return }
 
-        search.opened = false
         reposition(on: full)
         panel.alphaValue = 0
         // Order in and take key WHILE THE CONTENT IS STILL SMALL. Making a window key runs
@@ -187,6 +177,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // and never returns. activate() must come first for the same reason.
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
+        search.syncSystem()
         search.expanded = true
         search.visible = true
 
@@ -195,11 +186,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1
         }
-        // After a frame, not `async`: main-queue blocks drain before SwiftUI's commit
-        // observer runs, so an `async` here lands in the SAME update as `expanded` above.
-        // The slabs would then lay out at full size on their only pass and the entrance
-        // would silently never animate. A real delay guarantees a first pass at 0.94.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { self.search.opened = true }
     }
 
     /// Pinned to the top edge of the screen the pointer is on, so the window itself never
@@ -218,17 +204,20 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func hide() {
         guard panel.isVisible, search.visible else { return }
         search.visible = false
+        search.stopQuery()
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.12
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             panel.animator().alphaValue = 0
-        } completionHandler: {
-            // A show that came in mid-fade owns the panel now; leave it alone.
-            guard !self.search.visible else { return }
-            self.panel.orderOut(nil)
-            self.panel.alphaValue = 1
-            self.search.reset()
+        } completionHandler: { [self] in
+            MainActor.assumeIsolated {
+                // A show that came in mid-fade owns the panel now; leave it alone.
+                guard !search.visible else { return }
+                panel.orderOut(nil)
+                panel.alphaValue = 1
+                search.reset()
+            }
         }
     }
 

@@ -14,13 +14,18 @@ import Observation
 // already fast, so NSMetadataQuery reads it directly. Apps are the exception: three
 // directory listings beat any query, and they let apps always outrank loose files.
 
-@Observable
+private final class WeakSearch {
+    weak var search: Search?
+    init(_ search: Search) { self.search = search }
+}
+
+@MainActor @Observable
 public final class Search {
     /// Package caches and build output: thousands of files nobody ever means to open by name.
     /// ponytail: a literal list, because that is what it is. Add a fragment when one annoys you.
     // ponytail: a static, not a module-level global. A global in an executable target
     // is not initialised when a test bundle loads that module, and reads as null memory.
-    public static let noisyPathFragments = [
+    public nonisolated static let noisyPathFragments = [
         "/node_modules/", "/.git/", "/go/pkg/mod/", "/.build/", "/.venv/", "/site-packages/",
         "/.cargo/registry/", "/__pycache__/",
         // Any interpreter's own standard library, wherever it was installed from: idlelib,
@@ -31,7 +36,7 @@ public final class Search {
 
     /// The one definition of the rule. Public so the tests exercise this and not a copy
     /// of it — a suite that re-implements the predicate passes whatever the predicate does.
-    public static func isNoisy(_ path: String) -> Bool {
+    public nonisolated static func isNoisy(_ path: String) -> Bool {
         noisyPathFragments.contains(where: path.contains)
     }
 
@@ -49,7 +54,9 @@ public final class Search {
     /// One grid row's worth, and the single definition of how wide that row is — the view
     /// takes its column count from here, so the shelf can never end up a ragged block.
     public static let recentLimit = 7
-    private var fileHits: [Hit] = []
+    /// What Spotlight found, with the term it was found for. One fact, so it can never be
+    /// updated without the other: `run` narrows these by prefix and needs both.
+    private var files: (term: String, hits: [Hit]) = ("", [])
     public var selection = 0
     /// Visible state drives the present/dismiss animation; the panel itself is ordered
     /// out only once that animation has finished.
@@ -67,28 +74,27 @@ public final class Search {
     /// hundred app cells sitting in it at launch pin the main thread before the panel can
     /// ever be shown.
     public var expanded = false
-    /// Set one runloop turn after the panel is ordered in, so the slabs spring from
-    /// slightly under their final size to it. The fade itself is the window's alpha.
-    public var opened = false
     /// The whole panel becomes the settings screen, which is why this lives here rather
     /// than in the view: hiding the panel has to clear it.
     public var showingSettings = false
     /// The path being launched. Set for the length of the launch animation only.
     public var launching: String?
+    /// The pending launch, so `reset()` can cancel it instead of the launch checking, when
+    /// it finally fires, whether anyone still wants it.
+    public var launchTask: Task<Void, Never>?
     /// Bumped when the system accent changes. NSColor.controlAccentColor is dynamic, but
     /// a SwiftUI Color built from it is resolved once, so the view needs a nudge.
     public var appearanceToken = 0
 
-    private let apps: [Hit]
+    private var apps: [Hit]
     /// Built once beside `apps`: both are immutable, and this was being rebuilt — a
     /// dictionary plus a throwaway array of several hundred tuples — every time the field
     /// was emptied or the panel was hidden.
-    private let appsByPath: [String: Hit]
+    private var appsByPath: [String: Hit]
+    @ObservationIgnored private var stream: FSEventStreamRef?
     private let query = NSMetadataQuery()
-    private let warmup = NSMetadataQuery()
     private let frecency: Frecency
     private var startedAt = Date()
-    private var lastTerm = ""
 
     public let settings: Preferences
 
@@ -98,7 +104,7 @@ public final class Search {
          settings: Preferences = Preferences()) {
         self.frecency = frecency
         self.apps = apps
-        appsByPath = Dictionary(apps.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        appsByPath = Search.index(apps)
         self.settings = settings
         // Home by default: the whole-disk scope drags in caches, SDKs and system bundles,
         // which cost time and are never what anyone meant to open by name. Settings can
@@ -108,53 +114,56 @@ public final class Search {
         // sort attribute for every match — measured at ~650 ms for a broad term against
         // ~140 ms unsorted. Ranking happens locally instead, over the few rows shown.
         query.operationQueue = .main
-        query.notificationBatchingInterval = 0.3 // coalesce live-update storms
-        for name in [NSNotification.Name.NSMetadataQueryDidFinishGathering, .NSMetadataQueryDidUpdate] {
-            NotificationCenter.default.addObserver(
-                forName: name, object: query, queue: .main
-            ) { [weak self] _ in self?.collect() }
+        // One gather per search, then the query is stopped (see below): a live query keeps
+        // re-reading up to 150 results on the main thread for every index change on the
+        // disk, and nobody watches the list long enough for a new file to matter.
+        NotificationCenter.default.addObserver(
+            forName: .NSMetadataQueryDidFinishGathering, object: query, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                self.collect()
+                self.query.stop()
+            }
         }
         // Through rebuild, not by assigning hits directly: the browse list is not simply
         // `apps` — utilities are split out of the grid and moved to the end.
         rebuild()
-        // Opening the metadata-server connection costs ~30 ms once. Paying it at launch
-        // keeps it off the first keystroke.
         guard warm else { return }
-        warmup.searchScopes = [NSMetadataQueryUserHomeScope]
-        warmup.predicate = NSPredicate(format: "kMDItemDisplayName == %@", "\u{1}")
-        warmup.start()
-        // An NSMetadataQuery must be stopped on the run loop that started it, or it
-        // complains on dealloc. The connection it opened stays warm either way.
-        NotificationCenter.default.addObserver(
-            forName: .NSMetadataQueryDidFinishGathering, object: warmup, queue: .main
-        ) { [weak self] _ in self?.warmup.stop() }
+        watchAppRoots()
+        observeSystemSettings()
+    }
 
-        NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
-            object: nil, queue: .main
-        ) { [weak self] _ in
-            // Guarded: @Observable notifies on every assignment, equal or not, and each
-            // notification is a full re-evaluation of a panel full of glass.
-            guard let self else { return }
-            let transparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
-            let motion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            if transparency != reduceTransparency { reduceTransparency = transparency }
-            if motion != reduceMotion { reduceMotion = motion }
+    /// Accessibility, accent and the glass-tint slider. Observed only to be noted: while the
+    /// panel is hidden nothing draws, so a change is applied when it is next shown, not
+    /// re-rendered into a window nobody can see.
+    private var systemStale = false
+
+    private func observeSystemSettings() {
+        for (center, name) in [
+            (NSWorkspace.shared.notificationCenter, NSWorkspace.accessibilityDisplayOptionsDidChangeNotification),
+            (NotificationCenter.default, NSColor.systemColorsDidChangeNotification),
+        ] {
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                MainActor.assumeIsolated {
+                    if self.visible { self.syncSystem() } else { self.systemStale = true }
+                }
+            }
         }
-        NotificationCenter.default.addObserver(
-            forName: NSColor.systemColorsDidChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.appearanceToken += 1
-        }
-        NotificationCenter.default.addObserver(
-            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            // This fires for OUR OWN writes too — every settings change posts it — so
-            // without the comparison, flipping a toggle re-rendered the whole panel twice.
-            guard let self else { return }
-            let tint = Search.systemGlassTint()
-            if tint != glassTint { glassTint = tint }
-        }
+    }
+
+    /// Reads the system's appearance settings and publishes only what differs: @Observable
+    /// notifies on every assignment, equal or not, and each notification is a full
+    /// re-evaluation of a panel full of glass. Called when the panel is shown.
+    public func syncSystem() {
+        let transparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        let motion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let tint = Search.systemGlassTint()
+        if transparency != reduceTransparency { reduceTransparency = transparency }
+        if motion != reduceMotion { reduceMotion = motion }
+        if tint != glassTint { glassTint = tint }
+        if systemStale { systemStale = false; appearanceToken += 1 }
     }
 
     // MARK: Results
@@ -193,17 +202,13 @@ public final class Search {
             recentCount = 0
             let now = Date()
             let term = text.lowercased()
-            var taken = Set<String>()
-            let rankedApps = ranked(apps, term: term, now: now) { hit in
-                guard hit.matches(text) else { return false }
-                taken.insert(hit.id)
-                return true
-            }
+            let rankedApps = ranked(apps, term: term, now: now) { $0.matches(text) }
+            let taken = Set(rankedApps.map(\.id))
             // `$0.matches(text)` and not merely "not already an app hit": run() narrows
             // the interim hits, but it is debounced by 120 ms, and for that window this is
             // the only thing standing between a fast Return and a file the term no longer
             // matches at all.
-            let rankedFiles = Array(ranked(fileHits, term: term, now: now) {
+            let rankedFiles = Array(ranked(files.hits, term: term, now: now) {
                 !taken.contains($0.id) && $0.matches(text)
             }.prefix(40))
             // Apps stay a contiguous leading block, because the view draws them as a grid.
@@ -224,17 +229,13 @@ public final class Search {
         // shows a correct interim list instead of blanking the panel on every keystroke.
         // Any other edit invalidates them, and they go — leaving them would let a fast
         // Return open whatever the *previous* term found.
-        let had = fileHits.count
-        if term.hasPrefix(lastTerm), !lastTerm.isEmpty {
-            fileHits = fileHits.filter { $0.matches(term) }
-        } else {
-            fileHits = []
-        }
-        lastTerm = term
+        let had = files.hits.count
+        let narrowed = term.hasPrefix(files.term) && !files.term.isEmpty
+        files = (term, narrowed ? files.hits.filter { $0.matches(term) } : [])
         // `text`'s own didSet has already rebuilt for this term. Doing it again is only
         // worth a full re-rank and re-sort of every app when the file half actually moved,
         // which for a term under two characters it never has.
-        if fileHits.count != had { rebuild() }
+        if files.hits.count != had { rebuild() }
         guard term.count >= 2 else { return }
         startedAt = Date()
         // %@ substitution makes the term a literal, so nothing escapes into the query
@@ -246,8 +247,6 @@ public final class Search {
         query.start()
     }
 
-    /// The scope changed under a live query. Whatever it had gathered is for the old scope,
-    /// so it is thrown away and the same term is asked again.
     /// Republishes the list against the current preferences, keeping the highlight where
     /// it was. The recents shelf is built in `rebuild`, so turning it off has to run this
     /// or nothing changes until the panel is next opened.
@@ -255,18 +254,18 @@ public final class Search {
         rebuild(preserving: selectedHit?.id)
     }
 
+    /// The scope changed under a live query. Whatever it had gathered is for the old scope,
+    /// so it is thrown away and the same term is asked again.
     public func rescope() {
         guard !text.isEmpty else { return }
         invalidateFileHits()
         run(text)
     }
 
-    /// The interim hits and the term they belong to are one fact in two fields, and they
-    /// are always cleared together.
-    private func invalidateFileHits() {
-        fileHits = []
-        lastTerm = ""
-    }
+    private func invalidateFileHits() { files = ("", []) }
+
+    /// For `hide()`: a query must not outlive the panel it was feeding.
+    public func stopQuery() { query.stop() }
 
     /// Filter, score and sort in one pass. Written out rather than chained because the
     /// chained form allocated an array for the filter, another for the scored tuples and a
@@ -290,8 +289,8 @@ public final class Search {
         // Both names, the same pair `matches` admits. Scoring the displayed name alone
         // meant an app found through its name on disk — Impostazioni di Sistema, matched by
         // typing "system" — earned no bonus at all and was ordered purely on length.
-        let name = hit.name.lowercased()
-        let onDisk = hit.fileName.lowercased()
+        let name = hit.nameLower
+        let onDisk = hit.fileNameLower
         if name == term || onDisk == term { score += 50 }
         else if name.hasPrefix(term) || onDisk.hasPrefix(term) { score += 25 }
         // Worth less than a prefix match on purpose: how well the name fits what was typed
@@ -306,9 +305,11 @@ public final class Search {
     }
 
     private static let usedHalfLife: TimeInterval = 14 * 24 * 3600
+    #if DEBUG
     /// Read once. `ProcessInfo.environment` builds the whole dictionary on every access,
-    /// and this was tested once per Spotlight batch.
+    /// and this was tested once per Spotlight batch. Debug builds only: `make run`.
     private static let timing = ProcessInfo.processInfo.environment["SPOTVIBE_TIME"] != nil
+    #endif
 
     /// Called when something is actually opened — the only signal worth learning from.
     public func record(_ hit: Hit) {
@@ -319,7 +320,11 @@ public final class Search {
         // Only ever stop a query that was actually started: -stopQuery on an untouched
         // NSMetadataQuery, off the run loop that would have started it, crashes.
         if query.isStarted { query.stop() }
-        if warmup.isStarted { warmup.stop() }
+        if let stream {
+            FSEventStreamStop(stream)
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+        }
     }
 
     public func reset() {
@@ -327,8 +332,9 @@ public final class Search {
         invalidateFileHits()
         text = ""
         launching = nil
-        opened = false
         showingSettings = false
+        launchTask?.cancel()
+        launchTask = nil
         expanded = false
         rebuild()
     }
@@ -366,36 +372,95 @@ public final class Search {
                 ?? item.value(forAttribute: kMDItemContentModificationDate as String) as? Date
             out.append(Hit(id: path, name: name, used: used))
         }
-        fileHits = out
+        files.hits = out
         // A live update must not yank the highlight out from under the arrow keys.
         rebuild(preserving: previous)
         if wasWebRow { selection = hits.count }
+        #if DEBUG
         if Self.timing {
             let ms = Date().timeIntervalSince(startedAt) * 1000
             FileHandle.standardError.write(
                 String(format: "query %@: %.0f ms, %d file hits\n", text, ms, out.count).data(using: .utf8)!)
         }
+        #endif
     }
 
-    static func systemGlassTint() -> Double {
+    nonisolated static func systemGlassTint() -> Double {
         // Absent on a system that does not expose the slider; 0.5 is what it ships at.
         (UserDefaults.standard.object(forKey: "NSGlassTintAmount") as? Double) ?? 0.5
     }
 
-    /// ponytail: a plain directory listing, read once at launch. No FSEvents watcher —
-    /// add one only if installing an app mid-session and not finding it becomes a real gripe.
-    public static func installedApps() -> [Hit] {
-        let roots = ["/Applications", "/System/Applications", NSHomeDirectory() + "/Applications"]
+    private nonisolated static let appRoots = ["/Applications", "/System/Applications", NSHomeDirectory() + "/Applications"]
+
+    private static func index(_ apps: [Hit]) -> [String: Hit] {
+        Dictionary(apps.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// FSEvents is recursive, so one stream covers every subfolder of the three roots. Events
+    /// are per directory, so anything under `Foo.app/` — updaters write there all day — is
+    /// dropped and only an install or removal reaches `relistApps`. The 5 s latency lets the
+    /// kernel coalesce a burst into one wakeup.
+    /// ponytail: a root that does not exist yet (~/Applications) is not noticed once created.
+    private func watchAppRoots() {
+        // The stream retains the box and releases it on invalidation, and the box holds
+        // `Search` weakly: a callback already queued when `Search` goes away finds nil
+        // instead of freed memory.
+        let box = Unmanaged.passRetained(WeakSearch(self))
+        var context = FSEventStreamContext(
+            version: 0, info: box.toOpaque(), retain: nil,
+            release: { Unmanaged<WeakSearch>.fromOpaque($0!).release() },
+            copyDescription: nil)
+        let callback: FSEventStreamCallback = { _, info, _, paths, _, _ in
+            let changed = unsafeBitCast(paths, to: CFArray.self) as? [String] ?? []
+            guard changed.contains(where: { !$0.contains(".app/") }) else { return }
+            let search = Unmanaged<WeakSearch>.fromOpaque(info!).takeUnretainedValue().search
+            MainActor.assumeIsolated { search?.relistApps() }
+        }
+        guard let stream = FSEventStreamCreate(
+            nil, callback, &context, Search.appRoots as CFArray,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 5,
+            FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes)) else {
+            box.release() // the stream never took ownership
+            return
+        }
+        FSEventStreamSetDispatchQueue(stream, .main)
+        FSEventStreamStart(stream)
+        self.stream = stream
+    }
+
+    /// The walk asks LaunchServices for a name per bundle, so it runs off the main thread
+    /// and only the finished list is published — nothing for the hotkey path to wait on.
+    private func relistApps() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let found = Search.installedApps()
+            DispatchQueue.main.async {
+                guard let self, found != self.apps else { return }
+                self.apps = found
+                self.appsByPath = Search.index(found)
+                self.rebuild(preserving: self.selectedHit?.id)
+            }
+        }
+    }
+
+    /// A plain directory listing of the app folders.
+    public nonisolated static func installedApps() -> [Hit] {
+        let roots = appRoots
         let fm = FileManager.default
         var out: [Hit] = []
         var seen = Set<String>()
         for root in roots {
             guard let walker = fm.enumerator(
                 at: URL(fileURLWithPath: root), includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                // Not .skipsHiddenFiles: on macOS 26 Safari is a symlink into a cryptex that
+                // carries the `hidden` flag, and that option dropped it from the list.
+                options: [.skipsPackageDescendants]
             ) else { continue }
-            for case let url as URL in walker where url.pathExtension == "app" {
+            for case let listed as URL in walker where listed.pathExtension == "app"
+                && !listed.lastPathComponent.hasPrefix(".") {
                 walker.skipDescendants()
+                // The real path: through the symlink the icon carries an alias arrow, and
+                // the same app reached by two routes would be listed twice.
+                let url = listed.resolvingSymlinksInPath()
                 guard seen.insert(url.path).inserted else { continue }
                 // The name the Finder shows, which is the app's own localisation for the
                 // system language when it ships one — "Calendario", not "Calendar". Falls
