@@ -78,9 +78,9 @@ one keystroke away and never happens by accident.
 The gear beside the search bar grows into the settings — one piece of glass, no second
 window.
 
-![SpotVibe settings: glass thickness, the keyboard shortcut recorder, search scope, recents toggle and search engine](docs/screenshots/settings.png)
+![SpotVibe settings: window opacity, the keyboard shortcut recorder, search scope, recents toggle and search engine](docs/screenshots/settings.png)
 
-- **Glass thickness** — thin, medium or thick, for how much of your desktop shows through.
+- **Window opacity** — a slider, from nearly clear to nearly solid, for how much of your desktop shows through.
 - **Shortcut** — click and press any chord. Pressing the one already bound keeps it.
 - **Look in** — your home folder, or the whole Mac.
 - **Show recents** — the first row, on or off.

@@ -389,3 +389,52 @@ struct RecordingTests {
         #expect(settings.hotKeyLabel == "⌥Space")
     }
 }
+
+@Suite("Window opacity")
+struct OpacityTests {
+    private func settings(_ opacity: Double) -> Preferences {
+        let settings = Preferences(store: scratchDefaults())
+        settings.opacity = opacity
+        return settings
+    }
+
+    @Test("within each material the scrim grows with the slider")
+    func scrimGrowsWithinAMaterial() {
+        for range in [0.0 ..< Preferences.clearBelow, Preferences.clearBelow ..< 1.0] {
+            let steps = stride(from: range.lowerBound, to: range.upperBound, by: 0.01).map { settings($0).scrim }
+            #expect(zip(steps, steps.dropFirst()).allSatisfy { $1 >= $0 })
+        }
+    }
+
+    @Test("at the material switch the scrim eases off, because the regular glass is the heavier one")
+    func scrimEasesAtTheSwitch() {
+        let below = settings(Preferences.clearBelow - 0.001).scrim
+        let above = settings(Preferences.clearBelow).scrim
+        #expect(above < below && below - above < 0.15)
+    }
+
+    @Test("the clear material is the low end only")
+    func clearAtTheLowEnd() {
+        #expect(settings(0).usesClearGlass)
+        #expect(!settings(0.5).usesClearGlass)
+    }
+
+    @Test("a stored three-step thickness becomes the matching opacity")
+    func legacyThickness() {
+        let store = scratchDefaults()
+        store.set("thin", forKey: "thickness")
+        #expect(Preferences(store: store).usesClearGlass)
+        let thick = scratchDefaults()
+        thick.set("thick", forKey: "thickness")
+        #expect(Preferences(store: thick).scrim > 0.3)
+        #expect(Preferences(store: scratchDefaults()).opacity == Preferences.defaultOpacity)
+    }
+
+    @Test("a drag near the middle sticks to the default, and only there")
+    func snapsToTheDefault() {
+        #expect(Preferences.snapped(0.5 + Preferences.snapRange / 2) == Preferences.defaultOpacity)
+        #expect(Preferences.snapped(0.5 - Preferences.snapRange / 2) == Preferences.defaultOpacity)
+        #expect(Preferences.snapped(0.5 + Preferences.snapRange * 2) == 0.5 + Preferences.snapRange * 2)
+        #expect(Preferences.snapped(0.1) == 0.1)
+    }
+}
